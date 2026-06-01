@@ -1,0 +1,304 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::fs;
+use std::process::Command;
+use serde::{Deserialize, Serialize};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+mod settings;
+mod compiler;
+mod runner;
+mod edition;
+mod features;
+
+use settings::Settings;
+use compiler::{detect_compiler, compile};
+use runner::run;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RunResult {
+    pub status: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub time_ms: u128,
+}
+
+#[tauri::command]
+fn get_compiler_info() -> Result<String, String> {
+    let settings = Settings::load();
+    let compiler = detect_compiler(&settings);
+    let output = Command::new(&compiler)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("{}: {}", compiler, e))?;
+    let version = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(version.lines().next().unwrap_or("unknown").to_string())
+}
+
+#[tauri::command]
+fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, String> {
+    let settings = Settings::load();
+    let tmp_dir = std::env::temp_dir().join("33ide");
+    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let src = tmp_dir.join("sol.cpp");
+    let bin = tmp_dir.join(if cfg!(windows) { "sol.exe" } else { "sol" });
+    fs::write(&src, &code).map_err(|e| e.to_string())?;
+    let cr = compile(&src, &bin, &settings);
+    if !cr.success {
+        let _ = fs::remove_file(&src);
+        return Ok(RunResult {
+            status: "compile_error".to_string(),
+            stdout: String::new(),
+            stderr: cr.error.unwrap_or_default(),
+            exit_code: None,
+            time_ms: 0,
+        });
+    }
+    let result = run(&bin, &input.unwrap_or_default(), &settings);
+    let _ = fs::remove_file(&src);
+    let _ = fs::remove_file(&bin);
+    Ok(RunResult {
+        status: result.status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exit_code,
+        time_ms: result.time_ms,
+    })
+}
+
+#[tauri::command]
+fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
+    let settings = Settings::load();
+    let tmp_dir = std::env::temp_dir().join("33ide");
+    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let src = tmp_dir.join("term.cpp");
+    let bin = tmp_dir.join(if cfg!(windows) { "term.exe" } else { "term" });
+    fs::write(&src, &code).map_err(|e| e.to_string())?;
+    let cr = compile(&src, &bin, &settings);
+    let _ = fs::remove_file(&src);
+    if !cr.success {
+        return Ok(serde_json::json!({ "ok": false, "error": cr.error.unwrap_or_default() }));
+    }
+    if cfg!(windows) {
+        let bat = tmp_dir.join("run.bat");
+        fs::write(&bat, format!(
+            "@echo off\r\ncd /d \"{}\"\r\n\"{}\"\r\necho.\r\npause\r\n",
+            bin.parent().unwrap_or(&tmp_dir).display(),
+            bin.display()
+        )).map_err(|e| e.to_string())?;
+        Command::new("cmd.exe")
+            .args(&["/c", "start", "cmd.exe", "/c", &bat.to_string_lossy()])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else {
+        Command::new("open")
+            .args(&["-a", "Terminal", &bin.to_string_lossy()])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+fn read_file(path: String) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_file(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn reveal_in_explorer(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .args(&["/select,", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(&["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let dir = std::path::Path::new(&path)
+            .parent()
+            .unwrap_or(std::path::Path::new("/"));
+        Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_settings() -> Result<Settings, String> {
+    Ok(Settings::load())
+}
+
+#[tauri::command]
+fn save_settings(new_settings: Settings) -> Result<(), String> {
+    new_settings.save()
+}
+
+#[tauri::command]
+fn get_config_path() -> String {
+    Settings::config_path_str()
+}
+
+#[tauri::command]
+fn read_template() -> String {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    for name in &["Template.cpp", "template.cpp"] {
+        let path = exe_dir.join(name);
+        if let Ok(content) = fs::read_to_string(&path) {
+            return content;
+        }
+    }
+
+    Settings::default().default_template
+}
+
+#[tauri::command]
+fn open_template() -> Result<(String, String), String> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let template_path = exe_dir.join("Template.cpp");
+
+    if template_path.exists() {
+        let content = fs::read_to_string(&template_path).map_err(|e| e.to_string())?;
+        Ok((template_path.to_string_lossy().to_string(), content))
+    } else {
+        let default = Settings::default().default_template;
+        fs::write(&template_path, &default).map_err(|e| e.to_string())?;
+        Ok((template_path.to_string_lossy().to_string(), default))
+    }
+}
+
+#[tauri::command]
+fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let cf_candidates = vec![
+        exe_dir.join("tools").join("mingw64").join("bin").join("clang-format.exe"),
+        exe_dir.join("_up_").join("tools").join("mingw64").join("bin").join("clang-format.exe"),
+        exe_dir.join("resources").join("tools").join("mingw64").join("bin").join("clang-format.exe"),
+        exe_dir.join("..").join("..").join("..").join("tools").join("mingw64").join("bin").join("clang-format.exe"),
+        std::path::PathBuf::from("tools/mingw64/bin/clang-format.exe"),
+    ];
+
+    let cf_path = match cf_candidates.iter().find(|p| p.exists()) {
+        Some(p) => p.clone(),
+        None => return Ok(code),
+    };
+
+    let output = Command::new(&cf_path)
+        .arg("--style={BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4, UseTab: Never, ColumnLimit: 0}")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .creation_flags(0x00000008)
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(code.as_bytes());
+            }
+            child.wait_with_output()
+        });
+
+    match output {
+        Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).to_string()),
+        _ => Ok(code),
+    }
+}
+
+#[tauri::command]
+fn get_edition_info() -> serde_json::Value {
+    serde_json::json!({
+        "edition": edition::EDITION,
+        "cph": edition::HAS_CPH,
+        "browser": edition::HAS_BROWSER,
+        "ai_translate": edition::HAS_AI_TRANSLATE,
+        "ai_suggest": edition::HAS_AI_SUGGEST,
+    })
+}
+
+fn main() {
+    eprintln!("[33IDE] Starting application...");
+    eprintln!("[33IDE] Current exe: {:?}", std::env::current_exe());
+    eprintln!("[33IDE] CWD: {:?}", std::env::current_dir());
+
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .invoke_handler(tauri::generate_handler![
+            get_compiler_info,
+            compile_and_run,
+            run_in_terminal,
+            read_file,
+            write_file,
+            reveal_in_explorer,
+            get_settings,
+            save_settings,
+            get_config_path,
+            read_template,
+            open_template,
+            get_edition_info,
+            format_code,
+        ]);
+
+    #[cfg(feature = "cph")]
+    {
+        builder = builder.invoke_handler(tauri::generate_handler![
+            features::cph::parse_problem,
+            features::cph::run_testcases,
+        ]);
+    }
+
+    #[cfg(feature = "ai_translate")]
+    {
+        builder = builder.invoke_handler(tauri::generate_handler![
+            features::ai_translate::translate_text,
+        ]);
+    }
+
+    #[cfg(feature = "ai_suggest")]
+    {
+        builder = builder.invoke_handler(tauri::generate_handler![
+            features::ai_suggest::get_completion,
+        ]);
+    }
+
+    #[cfg(feature = "browser")]
+    {
+        builder = builder.invoke_handler(tauri::generate_handler![
+            features::browser::open_embedded_browser,
+        ]);
+    }
+
+    builder
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

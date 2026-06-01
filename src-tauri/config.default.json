@@ -1,0 +1,11 @@
+{
+  "compiler_path": "",
+  "compile_flags": ["-std=c++14", "-O2", "-static"],
+  "stack_size": "1073741824",
+  "time_limit_ms": 2000,
+  "default_template": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(0);\n\n\n\n    return 0;\n}\n",
+  "default_language": "cpp",
+  "editor_font_size": 14,
+  "editor_theme": "vs-dark",
+  "editor_minimap": false
+}

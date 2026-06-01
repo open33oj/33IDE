@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>33IDE</title>
+  <style>
+    body{background:#1e1e1e;margin:0;overflow:hidden;height:100%}
+    #loading-overlay{position:fixed;inset:0;z-index:9999;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+    #loading-overlay .spinner{width:24px;height:24px;border:2px solid #3c3c3c;border-top-color:#DB5B6B;border-radius:50%;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    #loading-overlay .loading-text{color:#808080;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+    #loading-overlay .progress-bar{width:200px;height:3px;background:#3c3c3c;border-radius:2px;overflow:hidden}
+    #loading-overlay .progress-bar .progress-fill{height:100%;background:#DB5B6B;border-radius:2px;transition:width .3s ease}
+  </style>
+  <style id="cm-styles"></style>
+</head>
+<body>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">正在初始化...</div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  </div>
+
+  <div id="menubar">
+    <div class="menu-item">文件
+      <div class="menu-dropdown">
+        <div id="m-new">新建 <span class="shortcut">Ctrl+N</span></div>
+        <div id="m-open">打开... <span class="shortcut">Ctrl+O</span></div>
+        <div class="sep"></div>
+        <div id="m-save">保存 <span class="shortcut">Ctrl+S</span></div>
+        <div id="m-saveas">另存为...</div>
+        <div class="sep"></div>
+        <div id="m-template">打开模板</div>
+      </div>
+    </div>
+    <div class="menu-item">主题
+      <div class="menu-dropdown" id="theme-menu"></div>
+    </div>
+    <div class="menu-item" id="btn-format" title="格式化代码 (Shift+Alt+F)">格式化</div>
+    <div id="toolbar">
+      <button id="btn-terminal">终端运行</button>
+      <button id="btn-run" class="primary">▶ 运行 (F5)</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="editor-panel">
+      <div id="editor-tabs"></div>
+      <div id="editor"></div>
+    </div>
+    <div id="resizer" class="resizer"></div>
+    <div id="side-panel">
+      <div class="side-tabs">
+        <div class="side-tab active" data-panel="input">输入</div>
+        <div class="side-tab" data-panel="output">输出</div>
+      </div>
+      <div id="side-content-input" class="side-content">
+        <textarea id="input-area" placeholder="在此输入程序的 stdin 数据..."></textarea>
+      </div>
+      <div id="side-content-output" class="side-content hidden">
+        <div id="output-content">点击 "运行" 或按 F5 编译运行代码</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <span id="status-text">就绪</span>
+    <span id="compiler-info"></span>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
