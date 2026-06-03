@@ -6,7 +6,7 @@ import { runCode, runInTerminal, formatCurrentCode } from './lib/runner';
 import { setStatus, initSidebar, initResizer, initEditorContextMenu, initTabContextMenu, initThemeMenu, applyZoom } from './lib/ui';
 import { initContextMenuDismiss } from './lib/context-menu';
 import { HAS_CPH, HAS_BROWSER, HAS_AI_TRANSLATE, HAS_AI_SUGGEST } from './edition';
-import { switchTheme, applyFont, fixCodeMirrorStyles } from './editor-setup';
+import { switchTheme, applyFont, fixCodeMirrorStyles, forceLayout, lockGutterWidths } from './editor-setup';
 import { getView } from './lib/tabs';
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -55,6 +55,7 @@ async function init() {
   await yieldToMain();
   const editorEl = document.getElementById('editor')!;
   initView(editorEl, defaultTemplate, () => {});
+  await paint(); // 等待浏览器完成首次布局
   await yieldToMain();
 
   // Step 4: Create first tab (HEAVY)
@@ -82,6 +83,8 @@ async function init() {
   if (config.editor_font_size !== 16 || config.editor_font_family) {
     applyFont(getView(), config.editor_font_size, config.editor_font_family);
   }
+  lockGutterWidths(getView());
+  forceLayout(getView());
   await yieldToMain();
 
   // Step 8: Bind events

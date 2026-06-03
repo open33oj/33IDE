@@ -1,4 +1,5 @@
-import { EditorView, EditorState, baseExtensions, getCurrentThemeExtension, themeCompartment } from '../editor-setup';
+import { EditorView, EditorState, baseExtensions, getCurrentThemeExtension, themeCompartment, lockGutterWidths, forceLayout } from '../editor-setup';
+import { clearDiagnostics } from './diagnostics';
 
 export interface Tab {
   id: string;
@@ -15,14 +16,17 @@ let tabCounter = 0;
 
 function createState(doc: string, onDirty?: () => void): EditorState {
   const changeExt = EditorView.updateListener.of(update => {
-    if (update.docChanged && onDirty) onDirty();
+    if (update.docChanged) {
+      if (onDirty) onDirty();
+      clearDiagnostics(update.view);
+    }
   });
   return EditorState.create({ doc, extensions: [...baseExtensions, themeCompartment.of(getCurrentThemeExtension()), changeExt] });
 }
 
 export function initView(parent: HTMLElement, initialDoc: string, onDirty: () => void): EditorView {
   view = new EditorView({
-    state: createState(initialDoc, onDirty),
+    state: createState('', onDirty),
     parent,
   });
   return view;
@@ -48,6 +52,8 @@ export function switchTo(tab: Tab) {
   if (activeTab) activeTab.state = view.state;
   activeTab = tab;
   view.setState(tab.state);
+  lockGutterWidths(view);
+  forceLayout(view);
   view.focus();
   renderTabs();
   updateStatusbar();

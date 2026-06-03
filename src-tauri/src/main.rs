@@ -14,7 +14,7 @@ mod edition;
 mod features;
 
 use settings::Settings;
-use compiler::{detect_compiler, compile};
+use compiler::compile;
 use runner::run;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,6 +22,7 @@ pub struct RunResult {
     pub status: String,
     pub stdout: String,
     pub stderr: String,
+    pub raw_stderr: String,
     pub exit_code: Option<i32>,
     pub time_ms: u128,
 }
@@ -29,13 +30,7 @@ pub struct RunResult {
 #[tauri::command]
 fn get_compiler_info() -> Result<String, String> {
     let settings = Settings::load();
-    let compiler = detect_compiler(&settings);
-    let output = Command::new(&compiler)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("{}: {}", compiler, e))?;
-    let version = String::from_utf8_lossy(&output.stdout).to_string();
-    Ok(version.lines().next().unwrap_or("unknown").to_string())
+    compiler::get_compiler_info(&settings)
 }
 
 #[tauri::command]
@@ -53,6 +48,7 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
             status: "compile_error".to_string(),
             stdout: String::new(),
             stderr: cr.error.unwrap_or_default(),
+            raw_stderr: cr.raw_error.unwrap_or_default(),
             exit_code: None,
             time_ms: 0,
         });
@@ -63,7 +59,8 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
     Ok(RunResult {
         status: result.status,
         stdout: result.stdout,
-        stderr: result.stderr,
+        stderr: result.stderr.clone(),
+        raw_stderr: result.stderr,
         exit_code: result.exit_code,
         time_ms: result.time_ms,
     })

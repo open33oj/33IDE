@@ -19,6 +19,7 @@ export interface RunResult {
   status: string;
   stdout: string;
   stderr: string;
+  raw_stderr: string;
   exit_code: number | null;
   time_ms: number;
 }

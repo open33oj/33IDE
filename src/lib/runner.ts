@@ -1,6 +1,7 @@
 import { api, RunResult } from './api';
 import { getView, getActiveTab } from './tabs';
 import { setStatus, showOutput, appendOutput, switchToOutput } from './ui';
+import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
 
 export async function formatCurrentCode() {
   const view = getView();
@@ -23,10 +24,12 @@ export async function formatCurrentCode() {
 }
 
 export async function runCode() {
-  const code = getView().state.doc.toString();
+  const view = getView();
+  const code = view.state.doc.toString();
   const input = (document.getElementById('input-area') as HTMLTextAreaElement).value;
   const btn = document.getElementById('btn-run') as HTMLButtonElement;
   btn.disabled = true; btn.textContent = '运行中...';
+  clearDiagnostics(view);
   switchToOutput();
   showOutput('<span class="info">编译中...</span>');
   try {
@@ -61,6 +64,11 @@ function renderRunResult(result: RunResult) {
     output.appendChild(errLabel);
     output.appendChild(document.createTextNode(result.stderr || ''));
     setStatus('编译错误', 'error');
+    const view = getView();
+    const diags = parseGccErrors(result.raw_stderr || result.stderr || '');
+    if (diags.length > 0) {
+      setDiagnostics(view, diags);
+    }
   } else {
     output.textContent = '';
     output.appendChild(document.createTextNode(result.stdout || ''));

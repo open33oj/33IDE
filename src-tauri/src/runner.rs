@@ -21,7 +21,6 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
         .unwrap_or(&PathBuf::from("."))
         .to_path_buf();
 
-    let start = std::time::Instant::now();
     let mut cmd = Command::new(bin);
     cmd.env("PATH", format!("{};{}", compiler_bin.display(), std::env::var("PATH").unwrap_or_default()))
         .stdin(std::process::Stdio::piped())
@@ -37,13 +36,13 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
                 use std::io::Write;
                 let _ = stdin.write_all(input.as_bytes());
             }
-            child.wait_with_output()
+            let start = std::time::Instant::now();
+            let output = child.wait_with_output();
+            output.map(|o| (o, start.elapsed().as_millis()))
         });
 
-    let elapsed = start.elapsed().as_millis();
-
     match result {
-        Ok(output) => {
+        Ok((output, elapsed)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let code = output.status.code();
@@ -61,7 +60,7 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
             stdout: String::new(),
             stderr: e.to_string(),
             exit_code: None,
-            time_ms: elapsed,
+            time_ms: 0,
         },
     }
 }

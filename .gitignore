@@ -2,6 +2,7 @@ node_modules/
 src-tauri/target/
 tools/
 dist/
+release/
 *.log
 .DS_Store
 Thumbs.db

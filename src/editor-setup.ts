@@ -8,6 +8,7 @@ import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } 
 import { lintKeymap } from '@codemirror/lint';
 import { getTheme, themes } from './lib/themes';
 import { cppCompletion } from './lib/cpp-completion';
+import { createLinterExtension } from './lib/diagnostics';
 
 const themeCompartment = new Compartment();
 let currentThemeId = 'oneDark';
@@ -44,12 +45,16 @@ const baseExtensions: Extension[] = [
   autocompletion(),
   highlightSelectionMatches(),
   history(),
-  foldGutter(),
+  foldGutter({
+    openText: '−',
+    closedText: '+',
+  }),
   EditorState.tabSize.of(4),
   indentUnit.of('    '),
   makeTabKeymap(4),
   cpp(),
   cppCompletion(),
+  createLinterExtension(),
   keymap.of([
     ...defaultKeymap,
     ...searchKeymap,
@@ -98,6 +103,39 @@ export function applyFont(view: EditorView, fontSize: number, fontFamily?: strin
   }
   const gutters = view.dom.querySelectorAll('.cm-gutterElement') as NodeListOf<HTMLElement>;
   gutters.forEach(g => { g.style.fontSize = Math.max(10, fontSize - 2) + 'px'; });
+  forceLayout(view);
+}
+
+export function forceLayout(view: EditorView) {
+  requestAnimationFrame(() => {
+    view.setState(view.state);
+  });
+}
+
+export function lockGutterWidths(view: EditorView) {
+  const W = '24px';
+  const lock = () => {
+    const gutters = view.dom.querySelector('.cm-gutters') as HTMLElement | null;
+    if (!gutters) return;
+    for (const child of Array.from(gutters.children) as HTMLElement[]) {
+      if (child.classList.contains('cm-foldGutter')) {
+        child.style.setProperty('width', W, 'important');
+        child.style.setProperty('min-width', W, 'important');
+        child.style.setProperty('max-width', W, 'important');
+        child.style.setProperty('flex-shrink', '0', 'important');
+        child.style.setProperty('overflow', 'hidden', 'important');
+        for (const el of Array.from(child.children) as HTMLElement[]) {
+          el.style.setProperty('width', W, 'important');
+          el.style.setProperty('min-width', W, 'important');
+          el.style.setProperty('max-width', W, 'important');
+          el.style.setProperty('text-align', 'center', 'important');
+        }
+      }
+    }
+  };
+  lock();
+  const tick = () => { lock(); requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
 }
 
 export { baseExtensions, EditorView, EditorState, themes, themeCompartment, fixCodeMirrorStyles };
