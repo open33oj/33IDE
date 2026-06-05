@@ -134,7 +134,7 @@ body.resizing * { cursor: col-resize !important; user-select: none; }
 .theme-light #toolbar button:hover { background: #d0d0d0; }
 .theme-light #toolbar button.primary { background: #0078d4; color: #fff; }
 .theme-light #toolbar button.primary:hover { background: #106ebe; }
-.theme-light #compiler-info { color: #666; }
+.theme-light #compiler-info { color: white; }
 .theme-light #editor-panel { background: #fff; }
 .theme-light #editor { background: #fff; }
 .theme-light .resizer { background: #e0e0e0; }

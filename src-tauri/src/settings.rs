@@ -92,8 +92,4 @@ impl Settings {
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::write(&path, json).map_err(|e| e.to_string())
     }
-
-    pub fn config_path_str() -> String {
-        config_path().to_string_lossy().to_string()
-    }
 }

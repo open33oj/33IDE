@@ -16,11 +16,11 @@
 ## 功能
 
 - **CodeMirror 6 编辑器** — C++ 语法高亮、智能自动补全、代码格式化
-- **多主题支持** — One Dark、Quiet Light、Dracula、Monokai、GitHub、BBEdit 等
+- **多主题支持** — One Dark、Dracula、Monokai、DevCpp NewLook、GitHub、BBEdit
 - **内置编译器** — g++ 9.3.0 (MinGW64)，动态适配任意 GCC 版本
 - **一键编译运行** — F5 编译运行，结果在底部面板显示
 - **编译错误高亮** — 编译错误在编辑器中以红色波浪线标记，鼠标悬停查看错误信息
-- **代码格式化** — 集成 clang-format，一键格式化代码
+- **代码格式化** — 集成 clang-format，一键格式化代码，光标智能跟随
 - **标签页管理** — 多文件编辑，支持新建、关闭、切换
 - **可调整布局** — 拖拽分隔条调整编辑器与输出面板比例
 - **状态栏信息** — 实时显示编译器版本、保存状态、光标位置
@@ -29,6 +29,15 @@
 - **断网可用** — 所有资源本地化，无需联网
 
 ## 更新日志
+
+### v0.3.0
+- 新增 DevCpp NewLook 主题（移植自 Dev-C++ 5.11 配色）
+- 代码格式化后光标智能跟随（基于 jsdiff 算法）
+- 修复缩放后右键菜单与鼠标位置错位的问题
+- 应用图标更新为正方形白底样式
+- 移除未实现的功能模块（AI 翻译、AI 代码建议、内置浏览器、竞赛题单）
+- 移除未使用的依赖包，减小安装包体积
+- 清理废弃代码，优化项目结构
 
 ### v0.2.0
 - 编译器信息缓存，大幅加快启动速度
@@ -53,7 +62,7 @@
 | `compiler_path` | 编译器路径，留空自动检测 | `""` |
 | `compile_flags` | 编译选项 | `["-std=c++14", "-O2", "-static"]` |
 | `stack_size` | Windows 栈大小 | `"1073741824"` (1GB) |
-| `editor_font_size` | 编辑器字号 | `14` |
+| `editor_font_size` | 编辑器字号 | `16` |
 | `editor_theme` | 主题 | `"oneDark"` |
 
 ## 开发环境
@@ -72,14 +81,7 @@ npm run tauri:dev
 ## 打包
 
 ```bash
-# 基础版
 npm run build:basic
-
-# 高级版
-npm run build:advanced
-
-# 旗舰版
-npm run build:ultimate
 ```
 
 输出：`src-tauri/target/release/bundle/nsis/`
@@ -107,19 +109,14 @@ npm run build:ultimate
 │   │   ├── api.ts              # Tauri API 封装
 │   │   ├── context-menu.ts     # 右键菜单
 │   │   └── cpp-completion.ts   # C++ 补全
-│   └── features/               # 可选功能模块
-│       ├── cph/                # 竞赛题单
-│       ├── browser/            # 内置浏览器
-│       ├── ai-translate/       # AI 翻译
-│       └── ai-suggest/         # AI 代码建议
+│   └── lib/themes/             # 主题文件
+│       └── devcpp-newlook.ts   # DevCpp NewLook 主题
 ├── src-tauri/                  # Rust 后端
 │   ├── src/
 │   │   ├── main.rs             # 入口 + IPC
 │   │   ├── compiler.rs         # 编译器检测 + 编译
 │   │   ├── runner.rs           # 程序运行
-│   │   ├── settings.rs         # 配置管理
-│   │   ├── edition.rs          # 版本能力
-│   │   └── features/           # 功能模块
+│   │   └── settings.rs         # 配置管理
 │   └── tauri.conf.json
 ├── index.html
 ├── package.json

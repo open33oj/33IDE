@@ -1,17 +1,7 @@
 [package]
 name = "ide33"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-
-[features]
-default = ["basic"]
-basic = []
-advanced = ["cph", "browser", "ai_translate"]
-ultimate = ["advanced", "ai_suggest"]
-cph = []
-browser = []
-ai_translate = []
-ai_suggest = []
 
 [dependencies]
 tauri = { version = "2", features = [] }

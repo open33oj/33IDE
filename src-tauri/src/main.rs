@@ -10,8 +10,6 @@ use std::os::windows::process::CommandExt;
 mod settings;
 mod compiler;
 mod runner;
-mod edition;
-mod features;
 
 use settings::Settings;
 use compiler::compile;
@@ -149,11 +147,6 @@ fn save_settings(new_settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_config_path() -> String {
-    Settings::config_path_str()
-}
-
-#[tauri::command]
 fn read_template() -> String {
     let exe_dir = std::env::current_exe()
         .ok()
@@ -230,17 +223,6 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
-fn get_edition_info() -> serde_json::Value {
-    serde_json::json!({
-        "edition": edition::EDITION,
-        "cph": edition::HAS_CPH,
-        "browser": edition::HAS_BROWSER,
-        "ai_translate": edition::HAS_AI_TRANSLATE,
-        "ai_suggest": edition::HAS_AI_SUGGEST,
-    })
-}
-
 fn main() {
     eprintln!("[33IDE] Starting application...");
     eprintln!("[33IDE] Current exe: {:?}", std::env::current_exe());
@@ -259,41 +241,10 @@ fn main() {
             reveal_in_explorer,
             get_settings,
             save_settings,
-            get_config_path,
             read_template,
             open_template,
-            get_edition_info,
             format_code,
         ]);
-
-    #[cfg(feature = "cph")]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            features::cph::parse_problem,
-            features::cph::run_testcases,
-        ]);
-    }
-
-    #[cfg(feature = "ai_translate")]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            features::ai_translate::translate_text,
-        ]);
-    }
-
-    #[cfg(feature = "ai_suggest")]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            features::ai_suggest::get_completion,
-        ]);
-    }
-
-    #[cfg(feature = "browser")]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            features::browser::open_embedded_browser,
-        ]);
-    }
 
     builder
         .run(tauri::generate_context!())

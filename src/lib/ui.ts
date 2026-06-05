@@ -57,11 +57,6 @@ export function applyZoom(percent: number) {
   document.body.style.zoom = (percent / 100).toString();
 }
 
-function getFontFamily(config: { editor_font_family?: string; editor_font_size?: number }): string {
-  const family = config.editor_font_family || "'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', 'NSimSun', monospace";
-  return family;
-}
-
 export function setStatus(text: string, type?: string) {
   document.getElementById('status-text')!.textContent = text;
   document.getElementById('statusbar')!.className = type || '';

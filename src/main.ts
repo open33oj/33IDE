@@ -5,7 +5,6 @@ import { newFile, openFile, saveFile, saveFileAs, openTemplate } from './lib/fil
 import { runCode, runInTerminal, formatCurrentCode } from './lib/runner';
 import { setStatus, initSidebar, initResizer, initEditorContextMenu, initTabContextMenu, initThemeMenu, applyZoom } from './lib/ui';
 import { initContextMenuDismiss } from './lib/context-menu';
-import { HAS_CPH, HAS_BROWSER, HAS_AI_TRANSLATE, HAS_AI_SUGGEST } from './edition';
 import { switchTheme, applyFont, fixCodeMirrorStyles, forceLayout, lockGutterWidths } from './editor-setup';
 import { getView } from './lib/tabs';
 
@@ -143,12 +142,6 @@ async function init() {
   // Remove overlay — everything is ready
   document.getElementById('loading-overlay')?.remove();
   setStatus('就绪');
-
-  // Background tasks (non-blocking, after overlay removed)
-  if (HAS_CPH) import('./features/cph').then(m => m.initCPH());
-  if (HAS_BROWSER) import('./features/browser').then(m => m.initBrowser());
-  if (HAS_AI_TRANSLATE) import('./features/ai-translate').then(m => m.initAITranslate());
-  if (HAS_AI_SUGGEST) import('./features/ai-suggest').then(m => m.initAISuggest());
 }
 
 document.addEventListener('DOMContentLoaded', init);

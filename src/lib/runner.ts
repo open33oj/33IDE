@@ -2,16 +2,26 @@ import { api, RunResult } from './api';
 import { getView, getActiveTab } from './tabs';
 import { setStatus, showOutput, appendOutput, switchToOutput } from './ui';
 import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
+import { diffChars } from 'diff';
 
 export async function formatCurrentCode() {
   const view = getView();
   const code = view.state.doc.toString();
+  const cursorPos = view.state.selection.main.head;
   try {
     const formatted = await api.formatCode(code, 4);
     if (formatted !== code) {
+      // 使用成熟的 diff 库计算新的光标位置
+      const newPos = calcCursorPosition(code, formatted, cursorPos);
+      
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: formatted },
       });
+      
+      view.dispatch({
+        selection: { anchor: newPos },
+      });
+      
       const tab = getActiveTab();
       if (tab) tab.dirty = true;
       setStatus('已格式化', 'success');
@@ -21,6 +31,41 @@ export async function formatCurrentCode() {
   } catch (e: any) {
     setStatus('格式化失败: ' + e, 'error');
   }
+}
+
+function calcCursorPosition(oldCode: string, newCode: string, oldPos: number): number {
+  // 使用成熟的 diff 库（jsdiff）计算光标位置
+  // 这是 VSCode 等编辑器使用的方法
+  const changes = diffChars(oldCode, newCode);
+  
+  let newPos = 0;
+  let oldIdx = 0;
+  
+  for (const change of changes) {
+    if (!change.added && !change.removed) {
+      // 相等部分
+      const len = change.count || change.value.length;
+      if (oldIdx + len > oldPos) {
+        // 光标在这个相等段内
+        return newPos + (oldPos - oldIdx);
+      }
+      newPos += len;
+      oldIdx += len;
+    } else if (change.removed) {
+      // 删除部分
+      const len = change.count || change.value.length;
+      if (oldIdx + len > oldPos) {
+        // 光标在删除范围内，放在删除位置
+        return newPos;
+      }
+      oldIdx += len;
+    } else if (change.added) {
+      // 插入部分
+      newPos += change.count || change.value.length;
+    }
+  }
+  
+  return newPos;
 }
 
 export async function runCode() {

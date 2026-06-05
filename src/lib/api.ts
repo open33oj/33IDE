@@ -24,21 +24,9 @@ export interface RunResult {
   time_ms: number;
 }
 
-export interface CompileOk {
-  success: true;
-}
-
-export interface CompileErr {
-  success: false;
-  error: string;
-}
-
-export type CompileResult = CompileOk | CompileErr;
-
 export const api = {
   getSettings: () => invoke<AppConfig>('get_settings'),
   saveSettings: (s: AppConfig) => invoke<void>('save_settings', { newSettings: s }),
-  getConfigPath: () => invoke<string>('get_config_path'),
   readTemplate: () => invoke<string>('read_template'),
   openTemplate: () => invoke<[string, string]>('open_template'),
   getCompilerInfo: () => invoke<string>('get_compiler_info'),
