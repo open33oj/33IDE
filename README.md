@@ -71,6 +71,18 @@
 - Rust (via rustup)
 - Windows: Visual Studio Build Tools (C++ 桌面开发)
 
+## 准备编译器
+
+项目内置 MinGW 编译器压缩包，开发前需先解压：
+
+```bash
+# 解压编译器到 tools 目录
+cd tools
+7z x mingw64.7z -omingw64 -y
+```
+
+解压后 `tools/mingw64/bin/g++.exe` 应存在。
+
 ## 开发
 
 ```bash

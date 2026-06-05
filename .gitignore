@@ -1,6 +1,7 @@
 node_modules/
 src-tauri/target/
-tools/
+tools/mingw64/
+tools/mac/
 dist/
 release/
 *.log
