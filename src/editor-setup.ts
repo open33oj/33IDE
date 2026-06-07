@@ -1,6 +1,6 @@
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, dropCursor, Decoration, WidgetType } from '@codemirror/view';
 import { EditorState, Extension, Compartment, Prec, StateEffect, StateField } from '@codemirror/state';
-import { defaultKeymap, history, historyKeymap, indentMore, indentLess } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentMore, indentLess, insertNewlineKeepIndent } from '@codemirror/commands';
 import { cpp } from '@codemirror/lang-cpp';
 import { indentOnInput, bracketMatching, foldGutter, foldKeymap, indentUnit } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
@@ -141,6 +141,20 @@ const includeAngleBracketHandler = EditorView.inputHandler.of((view, from, to, t
   return true;
 });
 
+const braceInputHandler = EditorView.inputHandler.of((view, from, to, text) => {
+  if (text !== '{') return false;
+
+  const line = view.state.doc.lineAt(from);
+  const before = line.text.slice(0, from - line.from);
+  if (!/^\s*$/.test(before)) return false;
+
+  view.dispatch({
+    changes: { from, to, insert: '{' },
+    selection: { anchor: from + 1 },
+  });
+  return true;
+});
+
 function selectionDragShouldMove(event: MouseEvent | PointerEvent) {
   return navigator.platform.includes('Mac') ? !event.altKey : !event.ctrlKey;
 }
@@ -270,13 +284,13 @@ const baseExtensions: Extension[] = [
   drawSelection(),
   dropCursor(),
   rectangularSelection(),
-  indentOnInput(),
   bracketMatching(),
   closeBrackets(),
   autocompletion(),
   highlightSelectionMatches(),
   history(),
   includeAngleBracketHandler,
+  braceInputHandler,
   foldGutter({
     openText: '-',
     closedText: '+',
@@ -288,6 +302,32 @@ const baseExtensions: Extension[] = [
   cppCompletion(),
   createLinterExtension(),
   keymap.of([
+    {
+      key: 'Enter',
+      run: (view) => {
+        const { state } = view;
+        const sel = state.selection.main;
+        if (!sel.empty) return false;
+
+        const pos = sel.head;
+        const ch = state.sliceDoc(pos, pos + 1);
+        const chBefore = state.sliceDoc(pos - 1, pos);
+
+        if (chBefore === '{' && ch === '}') {
+          const line = state.doc.lineAt(pos);
+          const indent = line.text.match(/^(\s*)/)?.[1] || '';
+          const unit = state.facet(EditorState.tabSize);
+          const extra = ' '.repeat(unit);
+          view.dispatch({
+            changes: { from: pos, to: pos, insert: '\n' + indent + extra + '\n' + indent },
+            selection: { anchor: pos + 1 + indent.length + extra.length },
+          });
+          return true;
+        }
+
+        return insertNewlineKeepIndent(view);
+      },
+    },
     ...defaultKeymap,
     ...searchKeymap,
     ...historyKeymap,
