@@ -1,43 +1,49 @@
 # 目录结构说明
 
-## 开发模式 (`npm run tauri:dev`)
+## 项目结构
 
 ```
-D:\33IDE\33ide\
+C:\Users\daiji\Documents\work\33IDE\
 ├── src/                        # 前端源码 (TypeScript)
 │   ├── main.ts                 # 应用入口
 │   ├── editor-setup.ts         # CodeMirror 编辑器配置
 │   ├── style.css               # 全局样式
-│   ├── lib/                    # 核心模块
-│   │   ├── files.ts            # 文件读写操作
-│   │   ├── tabs.ts             # 标签页管理
-│   │   ├── ui.ts               # UI 组件（菜单栏、状态栏、面板）
-│   │   ├── themes.ts           # 主题切换与管理
-│   │   ├── runner.ts           # 编译/运行逻辑
-│   │   ├── api.ts              # Tauri API 封装
-│   │   ├── context-menu.ts     # 编辑器右键菜单
-│   │   └── cpp-completion.ts   # C++ 代码补全
-│   └── features/               # 可选功能模块（按版本启用）
-│       ├── cph/                # CPH 竞赛题单
-│       ├── browser/            # 内置浏览器面板
-│       ├── ai-translate/       # AI 翻译
-│       └── ai-suggest/         # AI 代码建议
+│   └── lib/                    # 核心模块
+│       ├── files.ts            # 文件读写操作
+│       ├── tabs.ts             # 标签页管理
+│       ├── ui.ts               # UI 组件（菜单栏、状态栏、面板）
+│       ├── themes.ts           # 主题切换与管理
+│       ├── themes/             # 主题定义文件
+│       │   └── devcpp-newlook.ts
+│       ├── runner.ts           # 编译/运行逻辑
+│       ├── api.ts              # Tauri API 封装
+│       ├── context-menu.ts     # 编辑器右键菜单
+│       ├── cpp-completion.ts   # C++ 代码补全
+│       └── diagnostics.ts      # 诊断信息
 ├── src-tauri/                  # Rust 后端
 │   ├── src/
 │   │   ├── main.rs             # 入口 + IPC 命令注册
 │   │   ├── compiler.rs         # 编译器检测 + 编译命令
 │   │   ├── runner.rs           # 程序运行（含终端运行）
-│   │   ├── settings.rs         # 配置加载/保存
-│   │   ├── edition.rs          # 版本能力声明
-│   │   └── features/           # 功能模块后端
-│   │       ├── cph.rs
-│   │       ├── browser.rs
-│   │       ├── ai_translate.rs
-│   │       └── ai_suggest.rs
+│   │   └── settings.rs         # 配置加载/保存
 │   ├── icons/                  # 应用图标
-│   └── tauri.conf.json         # Tauri 配置
+│   ├── capabilities/           # Tauri 能力配置
+│   │   └── default.json
+│   ├── tauri.conf.json         # Tauri 配置
+│   ├── config.default.json     # 默认配置文件
+│   ├── Cargo.toml              # Rust 依赖配置
+│   ├── Cargo.lock              # Rust 依赖锁定
+│   └── build.rs                # 构建脚本
+├── tools/                      # 工具目录
+│   └── mingw64.7z              # MinGW 编译器压缩包
 ├── dist/                       # Vite 构建输出（.gitignore）
-└── node_modules/               # 依赖（.gitignore）
+├── node_modules/               # 依赖（.gitignore）
+├── index.html                  # HTML 入口
+├── package.json                # Node.js 依赖配置
+├── package-lock.json           # Node.js 依赖锁定
+├── tsconfig.json               # TypeScript 配置
+├── vite.config.ts              # Vite 构建配置
+└── README.md                   # 项目说明
 ```
 
 ## 安装版本 (NSIS)

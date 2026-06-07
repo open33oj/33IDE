@@ -10,19 +10,28 @@ pub struct Settings {
     pub time_limit_ms: u64,
     pub default_template: String,
     pub default_language: String,
+    #[serde(default = "default_ui_language")]
+    pub ui_language: String,
     pub editor_font_size: u32,
     pub editor_theme: String,
-    pub editor_minimap: bool,
     #[serde(default = "default_font_family")]
     pub editor_font_family: String,
     #[serde(default = "default_zoom")]
     pub editor_zoom: u32,
     #[serde(default = "default_tab_size")]
     pub editor_tab_size: u32,
+    #[serde(default = "default_clang_format_brace_on_new_line")]
+    pub clang_format_brace_on_new_line: bool,
+    #[serde(default = "default_auto_save_existing_files")]
+    pub auto_save_existing_files: bool,
 }
 
 fn default_font_family() -> String {
     "'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', 'NSimSun', monospace".to_string()
+}
+
+fn default_ui_language() -> String {
+    "zh-CN".to_string()
 }
 
 fn default_zoom() -> u32 {
@@ -31,6 +40,14 @@ fn default_zoom() -> u32 {
 
 fn default_tab_size() -> u32 {
     4
+}
+
+fn default_clang_format_brace_on_new_line() -> bool {
+    false
+}
+
+fn default_auto_save_existing_files() -> bool {
+    false
 }
 
 impl Default for Settings {
@@ -44,14 +61,16 @@ impl Default for Settings {
             ],
             stack_size: "1073741824".to_string(),
             time_limit_ms: 2000,
-            default_template: "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(0);\n\n\n\n    return 0;\n}\n".to_string(),
+            default_template: "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(0);\n\n    return 0;\n}\n".to_string(),
             default_language: "cpp".to_string(),
+            ui_language: default_ui_language(),
             editor_font_size: 16,
             editor_theme: "oneDark".to_string(),
-            editor_minimap: false,
             editor_font_family: default_font_family(),
             editor_zoom: 100,
             editor_tab_size: 4,
+            clang_format_brace_on_new_line: default_clang_format_brace_on_new_line(),
+            auto_save_existing_files: default_auto_save_existing_files(),
         }
     }
 }

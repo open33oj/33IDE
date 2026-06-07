@@ -32,6 +32,13 @@ fn get_compiler_info() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_default_compiler_path() -> Result<String, String> {
+    let mut settings = Settings::load();
+    settings.compiler_path.clear();
+    Ok(compiler::detect_compiler(&settings))
+}
+
+#[tauri::command]
 fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, String> {
     let settings = Settings::load();
     let tmp_dir = std::env::temp_dir().join("33ide");
@@ -148,42 +155,12 @@ fn save_settings(new_settings: Settings) -> Result<(), String> {
 
 #[tauri::command]
 fn read_template() -> String {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    for name in &["Template.cpp", "template.cpp"] {
-        let path = exe_dir.join(name);
-        if let Ok(content) = fs::read_to_string(&path) {
-            return content;
-        }
-    }
-
-    Settings::default().default_template
-}
-
-#[tauri::command]
-fn open_template() -> Result<(String, String), String> {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    let template_path = exe_dir.join("Template.cpp");
-
-    if template_path.exists() {
-        let content = fs::read_to_string(&template_path).map_err(|e| e.to_string())?;
-        Ok((template_path.to_string_lossy().to_string(), content))
-    } else {
-        let default = Settings::default().default_template;
-        fs::write(&template_path, &default).map_err(|e| e.to_string())?;
-        Ok((template_path.to_string_lossy().to_string(), default))
-    }
+    Settings::load().default_template
 }
 
 #[tauri::command]
 fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
+    let settings = Settings::load();
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -202,8 +179,20 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
         None => return Ok(code),
     };
 
+    let tab_size = settings.editor_tab_size.max(1);
+    let break_before_braces = if settings.clang_format_brace_on_new_line {
+        "Allman"
+    } else {
+        "Attach"
+    };
+    let style = format!(
+        "{{BasedOnStyle: LLVM, IndentWidth: {0}, TabWidth: {0}, UseTab: Never, ColumnLimit: 0, BreakBeforeBraces: {1}}}",
+        tab_size,
+        break_before_braces
+    );
+
     let output = Command::new(&cf_path)
-        .arg("--style={BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4, UseTab: Never, ColumnLimit: 0}")
+        .arg(format!("--style={style}"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -223,6 +212,11 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 fn main() {
     eprintln!("[33IDE] Starting application...");
     eprintln!("[33IDE] Current exe: {:?}", std::env::current_exe());
@@ -233,6 +227,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
+            get_default_compiler_path,
             get_compiler_info,
             compile_and_run,
             run_in_terminal,
@@ -242,8 +237,8 @@ fn main() {
             get_settings,
             save_settings,
             read_template,
-            open_template,
             format_code,
+            exit_app,
         ]);
 
     builder

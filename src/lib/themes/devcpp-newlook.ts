@@ -138,18 +138,20 @@ const newLookBaseTheme = EditorView.theme({
     color: "white !important",
   },
   ".cm-activeLine": {
-    backgroundColor: "transparent",
+    backgroundColor: "#BBDFFF55",
   },
   ".cm-activeLineGutter": {
-    backgroundColor: "transparent",
+    backgroundColor: "#DCEBFF",
+    color: "#2B579A",
+    fontWeight: "bold",
   },
   ".cm-gutters": {
-    backgroundColor: "#f0f0f0",
-    color: "#888888",
-    borderRight: "1px solid #dddddd",
+    backgroundColor: "#F5F7FB",
+    color: "#7A8599",
+    borderRight: "1px solid #D6DCE8",
   },
   ".cm-lineNumbers .cm-gutterElement": {
-    color: "#888888",
+    color: "#7A8599",
   },
   ".cm-matchingBracket": {
     backgroundColor: "#FFFFAA",

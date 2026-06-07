@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>33IDE</title>
+  <title>33IDE Lite v0.9.1</title>
   <style>
     body{background:#1e1e1e;margin:0;overflow:hidden;height:100%}
     #loading-overlay{position:fixed;inset:0;z-index:9999;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
@@ -17,29 +17,37 @@
 <body>
   <div id="loading-overlay">
     <div class="spinner"></div>
-    <div class="loading-text" id="loading-text">正在初始化...</div>
+    <div class="loading-text" id="loading-text" data-i18n="loading.initializing">正在初始化...</div>
     <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
   </div>
 
   <div id="menubar">
-    <div class="menu-item">文件
+    <div class="menu-item">
+      <span data-i18n="menu.file">文件</span>
       <div class="menu-dropdown">
-        <div id="m-new">新建 <span class="shortcut">Ctrl+N</span></div>
-        <div id="m-open">打开... <span class="shortcut">Ctrl+O</span></div>
+        <div id="m-new"><span data-i18n="menu.file.new">新建</span> <span class="shortcut">Ctrl+N</span></div>
+        <div id="m-open"><span data-i18n="menu.file.open">打开...</span> <span class="shortcut">Ctrl+O</span></div>
         <div class="sep"></div>
-        <div id="m-save">保存 <span class="shortcut">Ctrl+S</span></div>
-        <div id="m-saveas">另存为...</div>
+        <div id="m-save"><span data-i18n="menu.file.save">保存</span> <span class="shortcut">Ctrl+S</span></div>
+        <div id="m-saveas" data-i18n="menu.file.saveAs">另存为...</div>
         <div class="sep"></div>
-        <div id="m-template">打开模板</div>
+        <div id="m-reveal"><span data-i18n="context.reveal">打开所在文件夹</span> <span class="shortcut">Ctrl+B</span></div>
+        <div id="m-close-tab"><span data-i18n="context.close">关闭</span> <span class="shortcut">Ctrl+W</span></div>
       </div>
     </div>
-    <div class="menu-item">主题
+    <div class="menu-item">
+      <span data-i18n="menu.theme">主题</span>
       <div class="menu-dropdown" id="theme-menu"></div>
     </div>
-    <div class="menu-item" id="btn-format" title="格式化代码 (Shift+Alt+F)">格式化</div>
+    <div class="menu-item">
+      <span data-i18n="menu.settings">设置</span>
+      <div class="menu-dropdown">
+        <div id="m-settings" data-i18n="settings.open">打开设置</div>
+      </div>
+    </div>
     <div id="toolbar">
-      <button id="btn-terminal">终端运行</button>
-      <button id="btn-run" class="primary">▶ 运行 (F5)</button>
+      <button id="btn-terminal" data-i18n="toolbar.terminal">终端运行</button>
+      <button id="btn-run" class="primary" data-i18n="toolbar.run">运行 (F5)</button>
     </div>
   </div>
 
@@ -51,21 +59,119 @@
     <div id="resizer" class="resizer"></div>
     <div id="side-panel">
       <div class="side-tabs">
-        <div class="side-tab active" data-panel="input">输入</div>
-        <div class="side-tab" data-panel="output">输出</div>
+        <div class="side-tab active" data-panel="input" data-i18n="sidebar.input">输入</div>
+        <div class="side-tab" data-panel="output" data-i18n="sidebar.output">输出</div>
       </div>
       <div id="side-content-input" class="side-content">
-        <textarea id="input-area" placeholder="在此输入程序的 stdin 数据..."></textarea>
+        <textarea id="input-area" data-i18n-placeholder="placeholder.stdin" placeholder="在此输入程序的 stdin 数据..."></textarea>
       </div>
       <div id="side-content-output" class="side-content hidden">
-        <div id="output-content">点击 "运行" 或按 F5 编译运行代码</div>
+        <div id="output-content" data-i18n="output.idle">点击“运行”或按 F5 编译运行代码</div>
       </div>
     </div>
   </div>
 
   <div id="statusbar">
-    <span id="status-text">就绪</span>
+    <span id="status-text" data-i18n="status.ready">就绪</span>
     <span id="compiler-info"></span>
+  </div>
+
+  <div id="settings-overlay" class="settings-overlay hidden">
+    <div class="settings-dialog">
+      <div class="settings-header">
+        <h2 data-i18n="settings.title">设置</h2>
+        <button id="settings-close" class="settings-close" type="button">&times;</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <div class="settings-section-title" data-i18n="settings.section.build">编译与运行</div>
+          <label class="settings-field">
+            <span data-i18n="settings.compilerPath">编译器路径</span>
+            <input id="settings-compiler-path" type="text">
+          </label>
+          <label class="settings-field">
+            <span data-i18n="settings.compileFlags">编译参数（每行一个）</span>
+            <textarea id="settings-compile-flags" rows="4"></textarea>
+          </label>
+          <div class="settings-grid">
+            <label class="settings-field">
+              <span data-i18n="settings.timeLimit">时间限制（毫秒）</span>
+              <input id="settings-time-limit" type="number" min="1">
+            </label>
+            <label class="settings-field">
+              <span data-i18n="settings.stackSize">栈大小</span>
+              <input id="settings-stack-size" type="text">
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title" data-i18n="settings.section.editor">编辑器</div>
+          <div class="settings-grid">
+            <label class="settings-field">
+              <span data-i18n="settings.theme">主题</span>
+              <select id="settings-theme"></select>
+            </label>
+            <label class="settings-field">
+              <span data-i18n="settings.defaultLanguage">默认语言</span>
+              <select id="settings-language">
+                <option value="cpp">C++</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span data-i18n="settings.uiLanguage">界面语言</span>
+              <select id="settings-ui-language">
+                <option value="zh-CN">简体中文</option>
+                <option value="en-US">English</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span data-i18n="settings.fontSize">字号</span>
+              <input id="settings-font-size" type="number" min="10" max="32">
+            </label>
+            <label class="settings-field">
+              <span data-i18n="settings.zoom">缩放 (%)</span>
+              <input id="settings-zoom" type="number" min="50" max="200">
+            </label>
+            <label class="settings-field">
+              <span data-i18n="settings.tabSize">Tab 宽度</span>
+              <input id="settings-tab-size" type="number" min="1" max="8">
+            </label>
+            <label class="settings-field settings-field-checkbox">
+              <input id="settings-auto-save-existing" type="checkbox">
+              <span data-i18n="settings.autoSaveExisting">自动保存已有文件</span>
+            </label>
+          </div>
+          <label class="settings-field">
+            <span data-i18n="settings.fontFamily">字体</span>
+            <input id="settings-font-family" type="text">
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title" data-i18n="settings.section.format">格式化</div>
+          <label class="settings-field settings-field-checkbox">
+            <input id="settings-clang-braces" type="checkbox">
+            <span data-i18n="settings.bracesAllman">花括号单独换行（Allman）</span>
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title" data-i18n="settings.section.template">模板</div>
+          <label class="settings-field">
+            <span data-i18n="settings.defaultTemplate">默认模板</span>
+            <textarea id="settings-template" rows="10"></textarea>
+          </label>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <button id="settings-reset" type="button" data-i18n="settings.reset">恢复默认设置</button>
+        <div class="settings-footer-actions">
+          <button id="settings-cancel" type="button" data-i18n="settings.cancel">取消</button>
+          <button id="settings-save" class="primary" type="button" data-i18n="settings.save">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

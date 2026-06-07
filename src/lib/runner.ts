@@ -1,70 +1,67 @@
-import { api, RunResult } from './api';
-import { getView, getActiveTab } from './tabs';
-import { setStatus, showOutput, appendOutput, switchToOutput } from './ui';
-import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
+import { EditorView } from '@codemirror/view';
 import { diffChars } from 'diff';
+import { api, RunResult } from './api';
+import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
+import { t } from './i18n';
+import { getActiveTab, getView } from './tabs';
+import { appendOutput, setStatus, showOutput, switchToOutput } from './ui';
 
 export async function formatCurrentCode() {
   const view = getView();
   const code = view.state.doc.toString();
   const cursorPos = view.state.selection.main.head;
+
   try {
     const formatted = await api.formatCode(code, 4);
     if (formatted !== code) {
-      // 使用成熟的 diff 库计算新的光标位置
       const newPos = calcCursorPosition(code, formatted, cursorPos);
-      
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: formatted },
-      });
-      
-      view.dispatch({
         selection: { anchor: newPos },
+        effects: EditorView.scrollIntoView(newPos, { y: 'center' }),
       });
-      
+
       const tab = getActiveTab();
       if (tab) tab.dirty = true;
-      setStatus('已格式化', 'success');
+      setStatus(t('status.formatSuccess'), 'success');
     } else {
-      setStatus('代码已是格式化状态', 'info');
+      setStatus(t('status.formatNoChange'), 'info');
     }
   } catch (e: any) {
-    setStatus('格式化失败: ' + e, 'error');
+    setStatus(t('status.formatFailed', { error: String(e) }), 'error');
   }
 }
 
 function calcCursorPosition(oldCode: string, newCode: string, oldPos: number): number {
-  // 使用成熟的 diff 库（jsdiff）计算光标位置
-  // 这是 VSCode 等编辑器使用的方法
   const changes = diffChars(oldCode, newCode);
-  
   let newPos = 0;
   let oldIdx = 0;
-  
+
   for (const change of changes) {
     if (!change.added && !change.removed) {
-      // 相等部分
       const len = change.count || change.value.length;
       if (oldIdx + len > oldPos) {
-        // 光标在这个相等段内
         return newPos + (oldPos - oldIdx);
       }
       newPos += len;
       oldIdx += len;
-    } else if (change.removed) {
-      // 删除部分
+      continue;
+    }
+
+    if (change.removed) {
       const len = change.count || change.value.length;
       if (oldIdx + len > oldPos) {
-        // 光标在删除范围内，放在删除位置
         return newPos;
       }
       oldIdx += len;
-    } else if (change.added) {
-      // 插入部分
+      continue;
+    }
+
+    if (change.added) {
       newPos += change.count || change.value.length;
     }
   }
-  
+
   return newPos;
 }
 
@@ -73,18 +70,23 @@ export async function runCode() {
   const code = view.state.doc.toString();
   const input = (document.getElementById('input-area') as HTMLTextAreaElement).value;
   const btn = document.getElementById('btn-run') as HTMLButtonElement;
-  btn.disabled = true; btn.textContent = '运行中...';
+
+  btn.disabled = true;
+  btn.textContent = t('toolbar.running');
   clearDiagnostics(view);
   switchToOutput();
-  showOutput('<span class="info">编译中...</span>');
+  showOutput(`<span class="info">${t('output.compiling')}</span>`);
+
   try {
     const result = await api.compileAndRun(code, input || undefined);
     renderRunResult(result);
   } catch (e: any) {
     showOutput('');
-    appendOutput('错误: ' + String(e), 'error');
+    appendOutput(t('status.error', { error: String(e) }), 'error');
   }
-  btn.disabled = false; btn.textContent = '▶ 运行 (F5)';
+
+  btn.disabled = false;
+  btn.textContent = t('toolbar.run');
 }
 
 export async function runInTerminal() {
@@ -94,40 +96,53 @@ export async function runInTerminal() {
     if (!result.ok) {
       switchToOutput();
       showOutput('');
-      appendOutput('编译错误:\n' + (result.error || ''), 'error');
+      appendOutput(t('output.compileError') + (result.error || ''), 'error');
     }
-  } catch (e: any) { setStatus('错误: ' + e, 'error'); }
+  } catch (e: any) {
+    setStatus(t('status.error', { error: String(e) }), 'error');
+  }
 }
 
 function renderRunResult(result: RunResult) {
   const output = document.getElementById('output-content')!;
+
   if (result.status === 'compile_error') {
     output.textContent = '';
     const errLabel = document.createElement('span');
     errLabel.className = 'error';
-    errLabel.textContent = '编译错误:\n';
+    errLabel.textContent = t('output.compileError');
     output.appendChild(errLabel);
     output.appendChild(document.createTextNode(result.stderr || ''));
-    setStatus('编译错误', 'error');
+    setStatus(t('status.compileError'), 'error');
+
     const view = getView();
     const diags = parseGccErrors(result.raw_stderr || result.stderr || '');
     if (diags.length > 0) {
       setDiagnostics(view, diags);
     }
-  } else {
-    output.textContent = '';
-    output.appendChild(document.createTextNode(result.stdout || ''));
-    if (result.stderr) {
-      const errSpan = document.createElement('span');
-      errSpan.className = 'error';
-      errSpan.textContent = result.stderr;
-      output.appendChild(errSpan);
-    }
-    const cls = result.exit_code === 0 ? 'success' : 'error';
-    const info = document.createElement('span');
-    info.className = cls;
-    info.textContent = `\n[退出代码: ${result.exit_code}, 耗时: ${result.time_ms}ms]`;
-    output.appendChild(info);
-    setStatus(result.exit_code === 0 ? '运行成功' : '运行失败', result.exit_code === 0 ? 'success' : 'error');
+    return;
   }
+
+  output.textContent = '';
+  output.appendChild(document.createTextNode(result.stdout || ''));
+  if (result.stderr) {
+    const errSpan = document.createElement('span');
+    errSpan.className = 'error';
+    errSpan.textContent = result.stderr;
+    output.appendChild(errSpan);
+  }
+
+  const cls = result.exit_code === 0 ? 'success' : 'error';
+  const info = document.createElement('span');
+  info.className = cls;
+  info.textContent = t('output.exitInfo', {
+    code: result.exit_code ?? '-',
+    time: result.time_ms,
+  });
+  output.appendChild(info);
+
+  setStatus(
+    result.exit_code === 0 ? t('status.runSuccess') : t('status.runFailed'),
+    result.exit_code === 0 ? 'success' : 'error',
+  );
 }
