@@ -216,6 +216,15 @@ export function initSidebar() {
       document.getElementById(`side-content-${(tab as HTMLElement).dataset.panel}`)!.classList.remove('hidden');
     });
   });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'a') {
+      const el = e.target as HTMLElement;
+      if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && !el.closest('.cm-editor')) {
+        e.preventDefault();
+      }
+    }
+  });
 }
 
 export function initResizer() {

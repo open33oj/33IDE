@@ -13,7 +13,7 @@
  *   Assembler     = clBlue (#0000FF)
  */
 
-import { EditorView } from "@codemirror/view";
+import { EditorView, Decoration, ViewPlugin, DecorationSet, ViewUpdate } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
@@ -133,9 +133,15 @@ const newLookBaseTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "#000000",
   },
-  "&.cm-focused .cm-selectionBackground, & .cm-line::selection, & .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection": {
+  "&.cm-focused .cm-selectionBackground, & .cm-selectionLayer .cm-selectionBackground": {
+    background: "#000080 !important",
+  },
+  "& .cm-line::selection, & .cm-content ::selection": {
     background: "#000080 !important",
     color: "white !important",
+  },
+  "&:not(.cm-focused) .cm-selectionLayer .cm-selectionBackground": {
+    background: "#000080 !important",
   },
   ".cm-activeLine": {
     backgroundColor: "#BBDFFF55",
@@ -203,7 +209,34 @@ const newLookBaseTheme = EditorView.theme({
   },
 }, { dark: false });
 
+const selectedTextMark = Decoration.mark({ class: "cm-selectedText" });
+
+const selectionColorPlugin = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) {
+    this.decorations = this.buildDecos(view);
+  }
+  update(update: ViewUpdate) {
+    if (update.docChanged || update.selectionSet || update.focusChanged) {
+      this.decorations = this.buildDecos(update.view);
+    }
+  }
+  buildDecos(view: EditorView): DecorationSet {
+    const { main } = view.state.selection;
+    if (main.empty) return Decoration.none;
+    return Decoration.set([selectedTextMark.range(main.from, main.to)]);
+  }
+}, {
+  decorations: (v) => v.decorations,
+});
+
 export const devcppNewLook = [
   newLookBaseTheme,
   syntaxHighlighting(newLookHighlight),
+  selectionColorPlugin,
+  EditorView.theme({
+    "& .cm-line .cm-selectedText, & .cm-line .cm-selectedText span": {
+      color: "white !important",
+    },
+  }),
 ];
