@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "33IDE Lite",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "identifier": "com.33ide.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "33IDE Lite v0.9.3",
+        "title": "33IDE Lite v0.10.0",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
@@ -23,7 +23,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; worker-src 'self' blob:"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; worker-src 'self' blob:",
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
@@ -33,7 +34,11 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": ["../tools/mingw64/**/*"],
+    "resources": [
+      "../tools/clangd.exe",
+      "../tools/clang-format.exe",
+      "../tools/mingw64/**/*"
+    ],
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",

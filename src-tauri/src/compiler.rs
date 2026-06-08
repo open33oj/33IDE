@@ -241,6 +241,38 @@ pub fn detect_compiler(settings: &Settings) -> String {
     "g++".to_string()
 }
 
+pub fn detect_clangd() -> String {
+    let exe_dir = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .parent()
+        .unwrap_or(&PathBuf::from("."))
+        .to_path_buf();
+
+    let candidates: Vec<PathBuf> = if cfg!(target_os = "windows") {
+        vec![
+            exe_dir.join("tools").join("clangd.exe"),
+            exe_dir.join("_up_").join("tools").join("clangd.exe"),
+            exe_dir.join("resources").join("tools").join("clangd.exe"),
+            exe_dir.join("..").join("..").join("..").join("tools").join("clangd.exe"),
+            PathBuf::from("tools/clangd.exe"),
+        ]
+    } else {
+        vec![
+            exe_dir.join("..").join("Resources").join("tools").join("clangd"),
+            exe_dir.join("tools").join("clangd"),
+            PathBuf::from("tools/clangd"),
+        ]
+    };
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+
+    "clangd".to_string()
+}
+
 /// Dynamically find the GCC libexec directory containing cc1plus.
 /// Scans the libexec/gcc/<target>/ directory for version subfolders
 /// instead of hardcoding a specific version.

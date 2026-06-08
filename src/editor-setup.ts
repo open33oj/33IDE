@@ -1,518 +1,380 @@
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, dropCursor, Decoration, WidgetType } from '@codemirror/view';
-import { EditorState, Extension, Compartment, Prec, StateEffect, StateField } from '@codemirror/state';
-import { defaultKeymap, history, historyKeymap, indentMore, indentLess, insertNewlineKeepIndent } from '@codemirror/commands';
-import { cpp } from '@codemirror/lang-cpp';
-import { indentOnInput, bracketMatching, foldGutter, foldKeymap, indentUnit } from '@codemirror/language';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { lintKeymap } from '@codemirror/lint';
-import { getTheme, themes } from './lib/themes';
-import { cppCompletion } from './lib/cpp-completion';
-import { createLinterExtension } from './lib/diagnostics';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline';
+import { conf as cppConf, language as cppLanguage } from 'monaco-editor/esm/vs/basic-languages/cpp/cpp';
+import { registerCppCompletion } from './lib/cpp-completion';
+import { defineMonacoThemes, getTheme, themes } from './lib/themes';
 
-const themeCompartment = new Compartment();
-const tabBehaviorCompartment = new Compartment();
-let currentThemeId = 'oneDark';
-let currentTabSize = 4;
-
-const DEFAULT_FONT = "'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', 'NSimSun', monospace";
-const DRAG_SELECTION_THRESHOLD = 5;
-
-type SelectionDragState = {
-  view: EditorView;
-  from: number;
-  to: number;
-  text: string;
-  startX: number;
-  startY: number;
-  started: boolean;
+(self as any).MonacoEnvironment = {
+  getWorker() {
+    return new EditorWorker();
+  },
 };
 
-let selectionDragState: SelectionDragState | null = null;
-let selectionDragListenersBound = false;
-let codeMirrorStyleObserver: MutationObserver | null = null;
-let codeMirrorStyleSyncFrame: number | null = null;
+export type EditorView = monaco.editor.IStandaloneCodeEditor;
+export type EditorModel = monaco.editor.ITextModel;
+export type EditorSelection = monaco.Selection;
+export type EditorViewState = monaco.editor.ICodeEditorViewState;
 
-class ManualDropCursorWidget extends WidgetType {
-  toDOM() {
-    const element = document.createElement('span');
-    element.className = 'cm-dropCursor cm-manualDropCursor';
-    return element;
-  }
+const DEFAULT_FONT = "'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', 'NSimSun', monospace";
+
+let currentThemeId = 'oneDark';
+let currentTabSize = 4;
+let currentFontSize = 16;
+let currentFontFamily = DEFAULT_FONT;
+let monacoBootstrapped = false;
+let cppLanguageRegistered = false;
+const layoutObservers = new WeakMap<EditorView, ResizeObserver>();
+const TOKEN_STYLE_ID = '33ide-monaco-token-colors';
+
+export interface EditorTabState {
+  model: EditorModel;
+  viewState: EditorViewState | null;
 }
 
-const setManualDropCursorPos = StateEffect.define<number | null>();
-
-const manualDropCursorField = StateField.define<Decoration>({
-  create() {
-    return Decoration.none;
-  },
-  update(value, transaction) {
-    for (const effect of transaction.effects) {
-      if (!effect.is(setManualDropCursorPos)) continue;
-      if (effect.value == null) return Decoration.none;
-      return Decoration.set([
-        Decoration.widget({
-          widget: new ManualDropCursorWidget(),
-          side: -1,
-        }).range(effect.value),
-      ]);
-    }
-    return transaction.docChanged ? value.map(transaction.changes) : value;
-  },
-  provide: (field) => EditorView.decorations.from(field),
-});
-
-function makeTabKeymap(spaces: number) {
-  const indent = ' '.repeat(spaces);
-  return keymap.of([
-    {
-      key: 'Tab',
-      run: ({ state, dispatch }) => {
-        if (state.selection.main.empty) {
-          dispatch(state.replaceSelection(indent));
-          return true;
-        }
-        indentMore({ state, dispatch });
-        return true;
-      },
-    },
-    {
-      key: 'Shift-Tab',
-      run: ({ state, dispatch }) => {
-        indentLess({ state, dispatch });
-        return true;
-      },
-    },
-  ]);
+export function bootstrapMonaco() {
+  if (monacoBootstrapped) return;
+  monacoBootstrapped = true;
+  registerCppLanguage();
+  defineMonacoThemes(monaco);
+  registerCppCompletion(monaco);
+  warmCppTokenizer();
 }
 
-function makePairedBracketDeleteKeymap() {
-  const pairs: Record<string, string> = {
-    '(': ')',
-    '[': ']',
-    '{': '}',
-  };
-
-  return keymap.of([
-    {
-      key: 'Backspace',
-      run: ({ state, dispatch }) => {
-        const sel = state.selection.main;
-        if (!sel.empty || sel.from === 0 || sel.from >= state.doc.length) return false;
-
-        const left = state.sliceDoc(sel.from - 1, sel.from);
-        const right = state.sliceDoc(sel.from, sel.from + 1);
-        if (pairs[left] !== right) return false;
-
-        dispatch({
-          changes: { from: sel.from - 1, to: sel.from + 1, insert: '' },
-          selection: { anchor: sel.from - 1 },
-        });
-        return true;
-      },
-    },
-  ]);
-}
-
-function getTabBehaviorExtension(tabSize: number): Extension {
-  const normalized = Math.max(1, Math.min(8, tabSize || 4));
-  return [
-    EditorState.tabSize.of(normalized),
-    indentUnit.of(' '.repeat(normalized)),
-    makeTabKeymap(normalized),
-  ];
-}
-
-const includeAngleBracketHandler = EditorView.inputHandler.of((view, from, to, text) => {
-  if (text !== '<') return false;
-
-  const line = view.state.doc.lineAt(from);
-  const before = line.text.slice(0, from - line.from);
-  if (!/^\s*#\s*include\s*$/.test(before)) return false;
-
-  const after = line.text.slice(to - line.from);
-  const insert = after.startsWith('>') ? '<' : '<>';
-
-  view.dispatch({
-    changes: { from, to, insert },
-    selection: { anchor: from + 1 },
-  });
-  return true;
-});
-
-const braceInputHandler = EditorView.inputHandler.of((view, from, to, text) => {
-  if (text !== '{') return false;
-
-  const line = view.state.doc.lineAt(from);
-  const before = line.text.slice(0, from - line.from);
-  if (!/^\s*$/.test(before)) return false;
-
-  view.dispatch({
-    changes: { from, to, insert: '{' },
-    selection: { anchor: from + 1 },
-  });
-  return true;
-});
-
-function selectionDragShouldMove(event: MouseEvent | PointerEvent) {
-  return navigator.platform.includes('Mac') ? !event.altKey : !event.ctrlKey;
-}
-
-function clearManualDropCursor(view?: EditorView) {
-  view?.dispatch({ effects: setManualDropCursorPos.of(null) });
-}
-
-function isInsideRange(pos: number, from: number, to: number) {
-  return pos >= from && pos <= to;
-}
-
-function bindSelectionDragListeners() {
-  if (selectionDragListenersBound) return;
-  selectionDragListenersBound = true;
-
-  document.addEventListener('mousemove', (event) => {
-    if (!selectionDragState) return;
-
-    const { view } = selectionDragState;
-    const dx = event.clientX - selectionDragState.startX;
-    const dy = event.clientY - selectionDragState.startY;
-    if (!selectionDragState.started && Math.hypot(dx, dy) < DRAG_SELECTION_THRESHOLD) return;
-
-    selectionDragState.started = true;
-    document.body.classList.add('selection-dragging');
-    event.preventDefault();
-
-    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-    if (pos == null) {
-      clearManualDropCursor(view);
-      return;
-    }
-
-    view.dispatch({ effects: setManualDropCursorPos.of(pos) });
-  });
-
-  document.addEventListener('mouseup', (event) => {
-    if (!selectionDragState) return;
-
-    const drag = selectionDragState;
-    selectionDragState = null;
-    document.body.classList.remove('selection-dragging');
-    clearManualDropCursor(drag.view);
-
-    if (!drag.started) {
-      const pos = drag.view.posAtCoords({ x: event.clientX, y: event.clientY });
-      if (pos != null) {
-        drag.view.dispatch({ selection: { anchor: pos } });
-      }
-      drag.view.focus();
-      return;
-    }
-
-    event.preventDefault();
-    const dropPos = drag.view.posAtCoords({ x: event.clientX, y: event.clientY });
-    if (dropPos == null || isInsideRange(dropPos, drag.from, drag.to)) {
-      drag.view.focus();
-      return;
-    }
-
-    if (selectionDragShouldMove(event)) {
-      const changes = drag.view.state.changes([
-        { from: drag.from, to: drag.to, insert: '' },
-        { from: dropPos, insert: drag.text },
-      ]);
-      const selectionFrom = changes.mapPos(dropPos, -1);
-      const selectionTo = changes.mapPos(dropPos, 1);
-      drag.view.dispatch({
-        changes,
-        selection: { anchor: selectionFrom, head: selectionTo },
-        effects: EditorView.scrollIntoView(selectionTo, { y: 'center' }),
-      });
-    } else {
-      drag.view.dispatch({
-        changes: { from: dropPos, insert: drag.text },
-        selection: { anchor: dropPos, head: dropPos + drag.text.length },
-        effects: EditorView.scrollIntoView(dropPos + drag.text.length, { y: 'center' }),
-      });
-    }
-
-    drag.view.focus();
-  });
-}
-
-const selectionDragHandlers = Prec.highest(EditorView.domEventHandlers({
-  mousedown(event, view) {
-    const selection = view.state.selection.main;
-    if (event.button !== 0 || selection.empty) return false;
-
-    const target = event.target;
-    const targetElement = target instanceof HTMLElement
-      ? target
-      : target instanceof Node
-        ? target.parentElement
-        : null;
-    if (!targetElement?.closest('.cm-content')) return false;
-
-    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-    if (pos == null || !isInsideRange(pos, selection.from, selection.to)) return false;
-
-    selectionDragState = {
-      view,
-      from: selection.from,
-      to: selection.to,
-      text: view.state.sliceDoc(selection.from, selection.to),
-      startX: event.clientX,
-      startY: event.clientY,
-      started: false,
-    };
-
-    event.preventDefault();
-    view.focus();
-    return true;
-  },
-  dragstart(event) {
-    if (!selectionDragState) return false;
-    event.preventDefault();
-    return true;
-  },
-}));
-
-const baseExtensions: Extension[] = [
-  lineNumbers(),
-  highlightActiveLineGutter(),
-  highlightActiveLine(),
-  drawSelection(),
-  dropCursor(),
-  rectangularSelection(),
-  bracketMatching(),
-  closeBrackets(),
-  autocompletion(),
-  highlightSelectionMatches(),
-  history(),
-  includeAngleBracketHandler,
-  braceInputHandler,
-  foldGutter({
-    openText: '-',
-    closedText: '+',
-  }),
-  makePairedBracketDeleteKeymap(),
-  manualDropCursorField,
-  selectionDragHandlers,
-  cpp(),
-  cppCompletion(),
-  createLinterExtension(),
-  keymap.of([
-    {
-      key: 'Enter',
-      run: (view) => {
-        const { state } = view;
-        const sel = state.selection.main;
-        if (!sel.empty) return false;
-
-        const pos = sel.head;
-        const ch = state.sliceDoc(pos, pos + 1);
-        const chBefore = state.sliceDoc(pos - 1, pos);
-
-        if (chBefore === '{' && ch === '}') {
-          const line = state.doc.lineAt(pos);
-          const indent = line.text.match(/^(\s*)/)?.[1] || '';
-          const unit = state.facet(EditorState.tabSize);
-          const extra = ' '.repeat(unit);
-          view.dispatch({
-            changes: { from: pos, to: pos, insert: '\n' + indent + extra + '\n' + indent },
-            selection: { anchor: pos + 1 + indent.length + extra.length },
-          });
-          return true;
-        }
-
-        return insertNewlineKeepIndent(view);
-      },
-    },
-    ...defaultKeymap,
-    ...searchKeymap,
-    ...historyKeymap,
-    ...foldKeymap,
-    ...completionKeymap,
-    ...closeBracketsKeymap,
-    ...lintKeymap,
-  ]),
-  EditorView.dragMovesSelection.of(selectionDragShouldMove),
-  EditorView.lineWrapping,
-];
-
-bindSelectionDragListeners();
-
-function isCodeMirrorStyleModule(text: string) {
-  return text.includes('\u037c');
-}
-
-function isLikelyCodeMirrorStyle(text: string) {
-  const hasLayoutSelectors = text.includes('.cm-editor')
-    && text.includes('.cm-scroller')
-    && text.includes('.cm-content');
-  if (!hasLayoutSelectors) return false;
-
-  const extraSelectorMatches = [
-    '.cm-line',
-    '.cm-gutters',
-    '.cm-selectionBackground',
-    '.cm-activeLine',
-    '.cm-focused',
-    '.cm-cursor',
-  ].filter((selector) => text.includes(selector)).length;
-
-  return extraSelectorMatches >= 3;
-}
-
-function getCodeMirrorStyleHost() {
-  let cmStylesEl = document.getElementById('cm-styles') as HTMLStyleElement | null;
-  if (!cmStylesEl && document.head) {
-    cmStylesEl = document.createElement('style');
-    cmStylesEl.id = 'cm-styles';
-    document.head.insertBefore(cmStylesEl, document.head.firstChild);
-  }
-  return cmStylesEl;
-}
-
-function getCodeMirrorStyleText() {
-  const styles = Array.from(document.querySelectorAll('style'))
-    .filter((element) => element.id !== 'cm-styles');
-
-  const styleModuleTexts = styles
-    .map((element) => element.textContent || '')
-    .filter(isCodeMirrorStyleModule);
-
-  if (styleModuleTexts.length) return styleModuleTexts.join('\n');
-
-  return styles
-    .map((element) => element.textContent || '')
-    .filter(isLikelyCodeMirrorStyle)
-    .join('\n');
-}
-
-function syncCodeMirrorStyles() {
-  const cmStylesEl = getCodeMirrorStyleHost();
-  if (!cmStylesEl) return false;
-
-  const text = getCodeMirrorStyleText();
-  if (!text) return false;
-
-  if (cmStylesEl.textContent !== text) {
-    cmStylesEl.textContent = text;
-  }
-  return true;
-}
-
-function scheduleCodeMirrorStyleSync() {
-  if (codeMirrorStyleSyncFrame != null) return;
-  codeMirrorStyleSyncFrame = requestAnimationFrame(() => {
-    codeMirrorStyleSyncFrame = null;
-    syncCodeMirrorStyles();
-  });
-}
-
-function installCodeMirrorStyleSync() {
-  if (codeMirrorStyleObserver) return;
-
-  const target = document.head || document.documentElement;
-  if (!target) return;
-
-  codeMirrorStyleObserver = new MutationObserver(() => {
-    scheduleCodeMirrorStyleSync();
-  });
-  codeMirrorStyleObserver.observe(target, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-}
-
-function fixCodeMirrorStyles(retries = 12) {
-  installCodeMirrorStyleSync();
-  if (syncCodeMirrorStyles()) return;
-
-  if (retries > 0) {
-    requestAnimationFrame(() => fixCodeMirrorStyles(retries - 1));
-  }
-}
-
-export function switchTheme(view: EditorView, themeId: string) {
-  const theme = getTheme(themeId);
-  currentThemeId = themeId;
-  view.dispatch({
-    effects: themeCompartment.reconfigure(theme.extension),
-  });
+export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty: () => void): EditorView {
+  bootstrapMonaco();
+  const theme = getTheme(currentThemeId);
   document.body.classList.remove('theme-dark', 'theme-light');
   document.body.classList.add('theme-' + theme.mode);
-  requestAnimationFrame(() => fixCodeMirrorStyles());
+
+  const editor = monaco.editor.create(parent, {
+    model: null,
+    language: 'cpp',
+    theme: theme.monacoTheme,
+    automaticLayout: true,
+    fontFamily: currentFontFamily,
+    fontSize: currentFontSize,
+    lineHeight: Math.round(currentFontSize * 1.4),
+    tabSize: currentTabSize,
+    insertSpaces: true,
+    detectIndentation: false,
+    minimap: { enabled: false },
+    stickyScroll: { enabled: false },
+    folding: true,
+    glyphMargin: false,
+    lineNumbers: 'on',
+    roundedSelection: false,
+    selectionHighlight: false,
+    occurrencesHighlight: 'off',
+    renderWhitespace: 'none',
+    renderControlCharacters: false,
+    unicodeHighlight: {
+      ambiguousCharacters: false,
+      invisibleCharacters: false,
+      nonBasicASCII: false,
+    },
+    scrollBeyondLastLine: false,
+    wordWrap: 'off',
+    dragAndDrop: true,
+    dropIntoEditor: { enabled: false },
+    autoIndent: 'none',
+    bracketPairColorization: { enabled: true },
+    autoClosingBrackets: 'always',
+    autoClosingQuotes: 'always',
+    formatOnPaste: false,
+    formatOnType: false,
+    contextmenu: false,
+    hideCursorInOverviewRuler: true,
+    overviewRulerLanes: 0,
+    overviewRulerBorder: false,
+    renderLineHighlight: 'line',
+    // Keep WebView2 hardware acceleration enabled, but avoid Monaco's
+    // experimental GPU text atlas: it throws OffscreenCanvas drawImage errors
+    // in WebView2 and can leave the editor half-rendered.
+    experimentalGpuAcceleration: 'off',
+    scrollbar: {
+      vertical: 'auto',
+      horizontal: 'auto',
+      useShadows: false,
+      alwaysConsumeMouseWheel: false,
+      verticalScrollbarSize: 10,
+      horizontalScrollbarSize: 10,
+    },
+  });
+  installEditorLayoutStabilizer(editor, parent);
+  scheduleScopedTokenColors();
+  return editor;
 }
 
-export function getCurrentThemeExtension() {
-  return getTheme(currentThemeId).extension;
+export function createEditorModel(content: string, onDirty: () => void): EditorModel {
+  bootstrapMonaco();
+  const model = monaco.editor.createModel(content, 'cpp');
+  monaco.editor.setModelLanguage(model, 'cpp');
+  warmCppTokenizer();
+  model.onDidChangeContent(() => onDirty());
+  return model;
+}
+
+export function getEditorValue(view: EditorView): string {
+  return view.getModel()?.getValue() || '';
+}
+
+export function getModel(view: EditorView): EditorModel {
+  const model = view.getModel();
+  if (!model) throw new Error('Editor model is not initialized');
+  return model;
+}
+
+export function getCursorOffset(view: EditorView): number {
+  const model = getModel(view);
+  const position = view.getPosition() || model.getPositionAt(0);
+  return model.getOffsetAt(position);
+}
+
+export function setCursorOffset(view: EditorView, offset: number) {
+  const model = getModel(view);
+  const position = model.getPositionAt(Math.max(0, Math.min(offset, model.getValueLength())));
+  view.setPosition(position);
+  view.revealPositionInCenter(position);
+}
+
+export function selectAll(view: EditorView) {
+  const model = getModel(view);
+  view.setSelection(model.getFullModelRange());
+  view.focus();
+}
+
+export function getSelectionOffsets(view: EditorView) {
+  const model = getModel(view);
+  const selection = view.getSelection() || new monaco.Selection(1, 1, 1, 1);
+  const from = model.getOffsetAt(selection.getStartPosition());
+  const to = model.getOffsetAt(selection.getEndPosition());
+  return {
+    from,
+    to,
+    empty: from === to,
+    text: model.getValueInRange(selection),
+    selection,
+  };
+}
+
+export function replaceSelection(view: EditorView, text: string) {
+  const selection = view.getSelection();
+  if (!selection) return;
+  view.executeEdits('33ide', [{ range: selection, text, forceMoveMarkers: true }]);
+  view.focus();
+}
+
+export function replaceEditorValue(view: EditorView, text: string, cursorOffset?: number) {
+  const model = getModel(view);
+  view.executeEdits('33ide', [{
+    range: model.getFullModelRange(),
+    text,
+    forceMoveMarkers: true,
+  }]);
+  if (typeof cursorOffset === 'number') {
+    setCursorOffset(view, cursorOffset);
+  }
+}
+
+export function switchTheme(_view: EditorView, themeId: string) {
+  bootstrapMonaco();
+  const theme = getTheme(themeId);
+  currentThemeId = theme.id;
+  monaco.editor.setTheme(theme.monacoTheme);
+  document.body.classList.remove('theme-dark', 'theme-light');
+  document.body.classList.add('theme-' + theme.mode);
+  scheduleScopedTokenColors();
+  fixEditorStyles();
 }
 
 export function setDefaultTabSize(tabSize: number) {
-  currentTabSize = Math.max(1, Math.min(8, tabSize || 4));
-}
-
-export function getCurrentTabBehaviorExtension() {
-  return getTabBehaviorExtension(currentTabSize);
+  currentTabSize = normalizeTabSize(tabSize);
 }
 
 export function applyTabSize(view: EditorView, tabSize: number) {
   setDefaultTabSize(tabSize);
-  view.dispatch({
-    effects: tabBehaviorCompartment.reconfigure(getCurrentTabBehaviorExtension()),
+  view.updateOptions({
+    tabSize: currentTabSize,
+    insertSpaces: true,
+    detectIndentation: false,
   });
 }
 
 export function applyFont(view: EditorView, fontSize: number, fontFamily?: string) {
-  const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement | null;
-  if (scroller) {
-    scroller.style.fontSize = `${fontSize}px`;
-    scroller.style.fontFamily = fontFamily || DEFAULT_FONT;
-  }
-  const gutters = view.dom.querySelectorAll('.cm-gutterElement') as NodeListOf<HTMLElement>;
-  gutters.forEach((gutter) => {
-    gutter.style.fontSize = `${Math.max(10, fontSize - 2)}px`;
+  currentFontSize = Math.max(10, Math.min(32, fontSize || 16));
+  currentFontFamily = fontFamily || DEFAULT_FONT;
+  view.updateOptions({
+    fontSize: currentFontSize,
+    fontFamily: currentFontFamily,
+    lineHeight: Math.round(currentFontSize * 1.4),
   });
   forceLayout(view);
 }
 
 export function forceLayout(view: EditorView) {
-  requestAnimationFrame(() => {
-    view.requestMeasure();
-    view.setState(view.state);
-    requestAnimationFrame(() => view.requestMeasure());
+  scheduleEditorLayout(view, 3);
+}
+
+function scheduleEditorLayout(view: EditorView, rounds = 2) {
+  let remaining = rounds;
+  const run = () => {
+    monaco.editor.remeasureFonts();
+    view.layout();
+    remaining -= 1;
+    if (remaining > 0) {
+      requestAnimationFrame(run);
+    }
+  };
+  requestAnimationFrame(run);
+}
+
+function installEditorLayoutStabilizer(view: EditorView, parent: HTMLElement) {
+  if (layoutObservers.has(view)) return;
+
+  const observer = new ResizeObserver(() => scheduleEditorLayout(view));
+  observer.observe(parent);
+  if (parent.parentElement) observer.observe(parent.parentElement);
+  layoutObservers.set(view, observer);
+
+  const onWindowResize = () => scheduleEditorLayout(view);
+  const onVisibilityChange = () => {
+    if (!document.hidden) scheduleEditorLayout(view, 4);
+  };
+  window.addEventListener('resize', onWindowResize);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
+  void document.fonts?.ready.then(() => scheduleEditorLayout(view, 4));
+  [0, 50, 250, 1000].forEach((delay) => {
+    window.setTimeout(() => scheduleEditorLayout(view, 3), delay);
+  });
+
+  view.onDidDispose(() => {
+    observer.disconnect();
+    window.removeEventListener('resize', onWindowResize);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    layoutObservers.delete(view);
   });
 }
 
-export function lockGutterWidths(view: EditorView) {
-  const width = '24px';
-  const lock = () => {
-    const gutters = view.dom.querySelector('.cm-gutters') as HTMLElement | null;
-    if (!gutters) return;
-    for (const child of Array.from(gutters.children) as HTMLElement[]) {
-      if (!child.classList.contains('cm-foldGutter')) continue;
-      child.style.setProperty('width', width, 'important');
-      child.style.setProperty('min-width', width, 'important');
-      child.style.setProperty('max-width', width, 'important');
-      child.style.setProperty('flex-shrink', '0', 'important');
-      child.style.setProperty('overflow', 'hidden', 'important');
-      for (const el of Array.from(child.children) as HTMLElement[]) {
-        el.style.setProperty('width', width, 'important');
-        el.style.setProperty('min-width', width, 'important');
-        el.style.setProperty('max-width', width, 'important');
-        el.style.setProperty('text-align', 'center', 'important');
-      }
-    }
-  };
-  lock();
-  const tick = () => {
-    lock();
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+export function lockGutterWidths(_view: EditorView) {
+  // Monaco owns the gutter layout internally; keep this as a compatibility hook.
 }
 
-export { baseExtensions, EditorView, EditorState, themes, themeCompartment, tabBehaviorCompartment, fixCodeMirrorStyles };
+export function installEditorKeybindings(view: EditorView) {
+  view.onKeyDown((event) => {
+    if (event.keyCode === monaco.KeyCode.Enter) {
+      if (handleEnterBetweenBraces(view)) {
+        event.preventDefault();
+      }
+    }
+  });
+
+  view.onDidType((text) => {
+    if (text === '<') completeIncludeAngleBracket(view);
+  });
+}
+
+function normalizeTabSize(tabSize: number) {
+  return Math.max(1, Math.min(8, tabSize || 4));
+}
+
+function handleEnterBetweenBraces(view: EditorView): boolean {
+  const model = view.getModel();
+  const position = view.getPosition();
+  const selection = view.getSelection();
+  if (!model || !position || !selection?.isEmpty()) return false;
+
+  const offset = model.getOffsetAt(position);
+  const code = model.getValue();
+  if (code[offset - 1] !== '{' || code[offset] !== '}') return false;
+
+  const line = model.getLineContent(position.lineNumber);
+  const indent = line.match(/^(\s*)/)?.[1] || '';
+  const extra = ' '.repeat(currentTabSize);
+  const text = '\n' + indent + extra + '\n' + indent;
+  view.executeEdits('33ide', [{ range: selection, text, forceMoveMarkers: true }]);
+  setCursorOffset(view, offset + 1 + indent.length + extra.length);
+  return true;
+}
+
+function completeIncludeAngleBracket(view: EditorView) {
+  const model = view.getModel();
+  const position = view.getPosition();
+  if (!model || !position) return;
+
+  const line = model.getLineContent(position.lineNumber);
+  const before = line.slice(0, position.column - 2);
+  const after = line.slice(position.column - 1);
+  if (!/^\s*#\s*include\s*$/.test(before) || after.startsWith('>')) return;
+
+  view.executeEdits('33ide', [{
+    range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+    text: '>',
+    forceMoveMarkers: true,
+  }]);
+  view.setPosition(position);
+}
+
+export function fixEditorStyles() {
+  warmCppTokenizer();
+  scheduleScopedTokenColors();
+  monaco.editor.remeasureFonts();
+  for (const editor of monaco.editor.getEditors()) {
+    scheduleEditorLayout(editor, 4);
+  }
+}
+
+function registerCppLanguage() {
+  if (cppLanguageRegistered) return;
+  cppLanguageRegistered = true;
+
+  if (!monaco.languages.getLanguages().some((language) => language.id === 'cpp')) {
+    monaco.languages.register({
+      id: 'cpp',
+      extensions: ['.cpp', '.cc', '.cxx', '.hpp', '.hh', '.hxx'],
+      aliases: ['C++', 'Cpp', 'cpp'],
+    });
+  }
+  monaco.languages.setMonarchTokensProvider('cpp', cppLanguage);
+  monaco.languages.setLanguageConfiguration('cpp', cppConf);
+}
+
+function warmCppTokenizer() {
+  monaco.editor.tokenize('int main() { return 0; }', 'cpp');
+  for (const model of monaco.editor.getModels()) {
+    if (model.getLanguageId() !== 'cpp') continue;
+    model.tokenization.forceTokenization(Math.min(model.getLineCount(), 50));
+  }
+}
+
+function scheduleScopedTokenColors(rounds = 4) {
+  let remaining = rounds;
+  const run = () => {
+    syncScopedTokenColors();
+    remaining -= 1;
+    if (remaining > 0) requestAnimationFrame(run);
+  };
+  requestAnimationFrame(run);
+}
+
+function syncScopedTokenColors() {
+  const source = document.querySelector<HTMLStyleElement>('style.monaco-colors')?.textContent || '';
+  const tokenRules = source.match(/\.mtk[a-zA-Z0-9_-]+(?:\s*,\s*\.mtk[a-zA-Z0-9_-]+)*\s*\{[^}]+\}/g) || [];
+  if (tokenRules.length === 0) return;
+
+  const scopedRules = tokenRules
+    .map((rule) => rule.replace(/(^|,\s*)(\.mtk)/g, '$1#editor .monaco-editor $2'))
+    .join('\n');
+
+  let style = document.getElementById(TOKEN_STYLE_ID) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement('style');
+    style.id = TOKEN_STYLE_ID;
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== scopedRules) {
+    style.textContent = scopedRules;
+  }
+}
+
+export { monaco, themes };

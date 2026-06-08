@@ -6,7 +6,7 @@
 C:\Users\daiji\Documents\work\33IDE\
 ├── src/                        # 前端源码 (TypeScript)
 │   ├── main.ts                 # 应用入口
-│   ├── editor-setup.ts         # CodeMirror 编辑器配置
+│   ├── editor-setup.ts         # Monaco 编辑器配置
 │   ├── style.css               # 全局样式
 │   └── lib/                    # 核心模块
 │       ├── files.ts            # 文件读写操作

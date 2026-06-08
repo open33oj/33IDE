@@ -1,9 +1,12 @@
+import 'monaco-editor/min/vs/editor/editor.main.css';
+import 'monaco-editor/esm/vs/editor/editor.all';
 import './style.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { message } from '@tauri-apps/plugin-dialog';
 import { api, AppConfig } from './lib/api';
 import { initContextMenuDismiss } from './lib/context-menu';
-import { applyFont, applyTabSize, fixCodeMirrorStyles, forceLayout, lockGutterWidths, setDefaultTabSize, switchTheme } from './editor-setup';
+import { applyFont, applyTabSize, fixEditorStyles, forceLayout, lockGutterWidths, setDefaultTabSize, switchTheme } from './editor-setup';
+import { initClangdFeatures } from './lib/clangd';
 import { initAutoSave, initExternalFileMonitor, newFile, openFile, promptReloadIfNeeded, revealActiveFileFolder, saveFile, saveFileAs, saveTab } from './lib/files';
 import { applyI18n, t } from './lib/i18n';
 import { runCode, runInTerminal, formatCurrentCode } from './lib/runner';
@@ -49,7 +52,11 @@ async function init() {
   const configPromise = api.getSettings().catch(() => DEFAULT_CONFIG);
   const templatePromise = api.readTemplate().catch(() => '');
   const compilerPathPromise = api.getDefaultCompilerPath().catch(() => DEFAULT_CONFIG.compiler_path);
-  const [config, tpl, defaultCompilerPath] = await Promise.all([configPromise, templatePromise, compilerPathPromise]);
+  const [config, tpl, defaultCompilerPath] = await Promise.all([
+    configPromise,
+    templatePromise,
+    compilerPathPromise,
+  ]);
   if (defaultCompilerPath) {
     DEFAULT_CONFIG.compiler_path = defaultCompilerPath;
     if (!config.compiler_path) {
@@ -57,6 +64,7 @@ async function init() {
     }
   }
   applyI18n(config.ui_language);
+  initClangdFeatures(() => getActiveTab()?.path || undefined);
 
   const defaultTemplate = config.default_template || tpl || DEFAULT_CONFIG.default_template;
   setDefaultTabSize(config.editor_tab_size || 4);
@@ -84,7 +92,7 @@ async function init() {
 
   setProgress(60, t('loading.styles'));
   await paint();
-  fixCodeMirrorStyles();
+  fixEditorStyles();
   await yieldToMain();
 
   setProgress(70, t('loading.theme'));

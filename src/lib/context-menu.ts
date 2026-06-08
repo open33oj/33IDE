@@ -26,17 +26,12 @@ export function showContextMenu(items: MenuItem[], x: number, y: number) {
   });
   document.body.appendChild(menu);
   activeMenu = menu;
-  
-  // 修正缩放后的坐标
-  const zoom = parseFloat(document.body.style.zoom || '1');
-  const fixedX = x / zoom;
-  const fixedY = y / zoom;
-  
+
   const rect = menu.getBoundingClientRect();
-  const maxX = window.innerWidth / zoom - rect.width;
-  const maxY = window.innerHeight / zoom - rect.height;
-  menu.style.left = Math.min(fixedX, maxX) + 'px';
-  menu.style.top = Math.min(fixedY, maxY) + 'px';
+  const maxX = window.innerWidth - rect.width;
+  const maxY = window.innerHeight - rect.height;
+  menu.style.left = Math.max(0, Math.min(x, maxX)) + 'px';
+  menu.style.top = Math.max(0, Math.min(y, maxY)) + 'px';
 }
 
 export function hideContextMenu() {

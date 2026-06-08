@@ -1,5 +1,15 @@
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { applyFont, forceLayout, switchTheme, themes } from '../editor-setup';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import {
+  applyFont,
+  forceLayout,
+  getEditorValue,
+  getSelectionOffsets,
+  replaceSelection,
+  selectAll,
+  switchTheme,
+  themes,
+} from '../editor-setup';
 import { api, AppConfig } from './api';
 import { showContextMenu, MenuItem } from './context-menu';
 import { t } from './i18n';
@@ -8,20 +18,15 @@ import { closeTab, getActiveTab, getTabs, getView, switchTo } from './tabs';
 const MIN_EDITOR_PANEL_WIDTH = 200;
 const MIN_SIDE_PANEL_WIDTH = 280;
 
-function getZoomScale() {
-  return parseFloat(document.body.style.zoom || '1') || 1;
-}
-
 function clampEditorPanelWidth(requestedWidth?: number) {
   const editorPanel = document.getElementById('editor-panel') as HTMLElement | null;
   if (!editorPanel) return;
 
-  const zoom = getZoomScale();
   const maxWidth = Math.max(
     MIN_EDITOR_PANEL_WIDTH,
-    window.innerWidth / zoom - MIN_SIDE_PANEL_WIDTH,
+    window.innerWidth - MIN_SIDE_PANEL_WIDTH,
   );
-  const currentWidth = requestedWidth ?? editorPanel.getBoundingClientRect().width / zoom;
+  const currentWidth = requestedWidth ?? editorPanel.getBoundingClientRect().width;
   const clampedWidth = Math.max(MIN_EDITOR_PANEL_WIDTH, Math.min(currentWidth, maxWidth));
 
   editorPanel.style.flex = 'none';
@@ -174,13 +179,19 @@ export function initSettingsDialog(
 
 export function applyZoom(percent: number) {
   const scale = Math.max(0.5, Math.min(2, (percent || 100) / 100));
-  document.body.style.zoom = scale.toString();
+  document.body.style.zoom = '';
   document.documentElement.style.setProperty('--app-zoom', scale.toString());
-  document.documentElement.style.setProperty('--settings-dialog-scale', (1 / scale).toString());
-  requestAnimationFrame(() => {
-    clampEditorPanelWidth();
-    forceLayout(getView());
-  });
+  void getCurrentWebviewWindow()
+    .setZoom(scale)
+    .catch(() => {
+      document.documentElement.style.setProperty('--app-zoom', '1');
+    })
+    .finally(() => {
+      requestAnimationFrame(() => {
+        clampEditorPanelWidth();
+        forceLayout(getView());
+      });
+    });
 }
 
 export function setStatus(text: string, type?: string) {
@@ -220,7 +231,7 @@ export function initSidebar() {
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === 'a') {
       const el = e.target as HTMLElement;
-      if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && !el.closest('.cm-editor')) {
+      if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && !el.closest('.monaco-editor')) {
         e.preventDefault();
       }
     }
@@ -239,8 +250,7 @@ export function initResizer() {
 
   document.addEventListener('mousemove', (e) => {
     if (!on) return;
-    const zoom = getZoomScale();
-    clampEditorPanelWidth(e.clientX / zoom);
+    clampEditorPanelWidth(e.clientX);
   });
 
   document.addEventListener('mouseup', () => {
@@ -261,7 +271,7 @@ export function initEditorContextMenu(onFormat: () => void) {
     const view = getView();
     const tab = getActiveTab();
     const filePath = tab?.path || '';
-    const sel = view.state.selection.main;
+    const sel = getSelectionOffsets(view);
     const hasSel = !sel.empty;
 
     const items: MenuItem[] = [
@@ -269,8 +279,7 @@ export function initEditorContextMenu(onFormat: () => void) {
         label: t('context.selectAll'),
         shortcut: 'Ctrl+A',
         action: () => {
-          view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
-          view.focus();
+          selectAll(view);
         },
       },
       {
@@ -284,15 +293,15 @@ export function initEditorContextMenu(onFormat: () => void) {
         shortcut: 'Ctrl+X',
         action: () => {
           if (!hasSel) return;
-          writeText(view.state.sliceDoc(sel.from, sel.to));
-          view.dispatch({ changes: { from: sel.from, to: sel.to, insert: '' } });
+          writeText(sel.text);
+          replaceSelection(view, '');
         },
       },
       {
         label: t('context.copy'),
         shortcut: 'Ctrl+C',
         action: () => {
-          writeText(hasSel ? view.state.sliceDoc(sel.from, sel.to) : view.state.doc.toString());
+          writeText(hasSel ? sel.text : getEditorValue(view));
         },
       },
       {
@@ -302,7 +311,7 @@ export function initEditorContextMenu(onFormat: () => void) {
           try {
             const text = await readText();
             if (text) {
-              view.dispatch({ changes: { from: sel.from, to: sel.to, insert: text } });
+              replaceSelection(view, text);
             }
           } catch {}
         },

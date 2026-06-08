@@ -26,6 +26,18 @@ export interface RunResult {
   time_ms: number;
 }
 
+export interface ClangdCompletionItem {
+  label: string;
+  detail?: string;
+  insert_text?: string;
+  kind?: number;
+}
+
+export interface ClangdSignature {
+  label: string;
+  documentation?: string;
+}
+
 export const api = {
   getSettings: () => invoke<AppConfig>('get_settings'),
   saveSettings: (s: AppConfig) => invoke<void>('save_settings', { newSettings: s }),
@@ -33,10 +45,17 @@ export const api = {
   getDefaultCompilerPath: () => invoke<string>('get_default_compiler_path'),
   getCompilerInfo: () => invoke<string>('get_compiler_info'),
   compileAndRun: (code: string, input?: string) => invoke<RunResult>('compile_and_run', { code, input }),
+  cancelRun: () => invoke<boolean>('cancel_run'),
   runInTerminal: (code: string) => invoke<{ ok: boolean; error?: string }>('run_in_terminal', { code }),
   readFile: (path: string) => invoke<string>('read_file', { path }),
   writeFile: (path: string, content: string) => invoke<void>('write_file', { path, content }),
   revealInExplorer: (path: string) => invoke<void>('reveal_in_explorer', { path }),
   formatCode: (code: string, tabSize: number) => invoke<string>('format_code', { code, tabSize }),
+  clangdComplete: (code: string, filePath: string | undefined, line: number, character: number) =>
+    invoke<ClangdCompletionItem[]>('clangd_complete', { code, filePath, line, character }),
+  clangdHover: (code: string, filePath: string | undefined, line: number, character: number) =>
+    invoke<string | null>('clangd_hover', { code, filePath, line, character }),
+  clangdSignatureHelp: (code: string, filePath: string | undefined, line: number, character: number) =>
+    invoke<ClangdSignature | null>('clangd_signature_help', { code, filePath, line, character }),
   exitApp: () => invoke<void>('exit_app'),
 };

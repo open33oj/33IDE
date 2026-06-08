@@ -1,13 +1,12 @@
-import { EditorState } from '@codemirror/state';
 import {
+  createEditor,
+  createEditorModel,
+  EditorTabState,
   EditorView,
-  baseExtensions,
   forceLayout,
-  getCurrentTabBehaviorExtension,
-  getCurrentThemeExtension,
+  getEditorValue,
+  installEditorKeybindings,
   lockGutterWidths,
-  tabBehaviorCompartment,
-  themeCompartment,
 } from '../editor-setup';
 import { clearDiagnostics } from './diagnostics';
 import { t } from './i18n';
@@ -16,7 +15,7 @@ export interface Tab {
   id: string;
   name: string;
   path: string;
-  state: EditorState;
+  state: EditorTabState;
   dirty: boolean;
   diskContent: string;
   externalModified: boolean;
@@ -42,35 +41,19 @@ let tabDragState: TabDragState | null = null;
 let tabDragListenersBound = false;
 const TAB_DRAG_THRESHOLD = 6;
 
-function createState(
-  doc: string,
-  onDirty?: () => void,
-  selection?: { anchor: number; head: number },
-): EditorState {
-  const changeExt = EditorView.updateListener.of((update) => {
-    if (update.docChanged) {
+function createState(doc: string, onDirty?: () => void): EditorTabState {
+  return {
+    model: createEditorModel(doc, () => {
       onDirty?.();
-      clearDiagnostics(update.view);
-    }
-  });
-
-  return EditorState.create({
-    doc,
-    selection,
-    extensions: [
-      ...baseExtensions,
-      themeCompartment.of(getCurrentThemeExtension()),
-      tabBehaviorCompartment.of(getCurrentTabBehaviorExtension()),
-      changeExt,
-    ],
-  });
+      if (view) clearDiagnostics(view);
+    }),
+    viewState: null,
+  };
 }
 
 export function initView(parent: HTMLElement, initialDoc: string, onDirty: () => void): EditorView {
-  view = new EditorView({
-    state: createState(initialDoc, onDirty),
-    parent,
-  });
+  view = createEditor(parent, initialDoc, onDirty);
+  installEditorKeybindings(view);
   return view;
 }
 
@@ -80,7 +63,7 @@ export function getActiveTab(): Tab | null { return activeTab; }
 export function getNextTabId(): string { return 'tab_' + (++tabCounter); }
 
 export function getTabContent(tab: Tab): string {
-  return activeTab?.id === tab.id ? view.state.doc.toString() : tab.state.doc.toString();
+  return activeTab?.id === tab.id ? getEditorValue(view) : tab.state.model.getValue();
 }
 
 export function shouldPromptSave(tab: Tab): boolean {
@@ -101,7 +84,7 @@ export function createTab(name: string, content: string, filePath: string = ''):
     id,
     name,
     path: filePath,
-    state: EditorState.create({ doc: '' }),
+    state: createState(''),
     dirty: false,
     diskContent: filePath ? content : '',
     externalModified: false,
@@ -121,9 +104,10 @@ export function createTab(name: string, content: string, filePath: string = ''):
 }
 
 export function switchTo(tab: Tab) {
-  if (activeTab) activeTab.state = view.state;
+  if (activeTab) activeTab.state.viewState = view.saveViewState();
   activeTab = tab;
-  view.setState(tab.state);
+  view.setModel(tab.state.model);
+  if (tab.state.viewState) view.restoreViewState(tab.state.viewState);
   lockGutterWidths(view);
   forceLayout(view);
   view.focus();
@@ -147,8 +131,12 @@ export function closeTab(
   if (activeTab?.id === id) {
     if (tabs.length > 0) switchTo(tabs[Math.min(idx, tabs.length - 1)]);
     else if (options.createReplacement !== false) createTab('untitled.cpp', '');
-    else activeTab = null;
+    else {
+      activeTab = null;
+      view.setModel(null);
+    }
   }
+  tab.state.model.dispose();
 
   renderTabs();
   return true;
@@ -166,20 +154,18 @@ export function replaceTabContent(
   } = {},
 ) {
   const isActive = activeTab?.id === tab.id;
-  const currentSelection = isActive ? view.state.selection.main : tab.state.selection.main;
+  const currentViewState = isActive ? view.saveViewState() : tab.state.viewState;
+  const oldModel = tab.state.model;
 
-  tab.state = createState(
-    content,
-    () => {
-      tab.dirty = true;
-      renderTabs();
-      notifyDirty(tab);
-    },
-    {
-      anchor: Math.min(currentSelection.anchor, content.length),
-      head: Math.min(currentSelection.head, content.length),
-    },
-  );
+  const emptyModel = tab.state.model;
+  tab.state = createState(content, () => {
+    tab.dirty = true;
+    renderTabs();
+    notifyDirty(tab);
+  });
+  emptyModel.dispose();
+  tab.state.viewState = currentViewState;
+  oldModel.dispose();
 
   if (typeof options.dirty === 'boolean') tab.dirty = options.dirty;
   if (typeof options.diskContent === 'string') tab.diskContent = options.diskContent;
@@ -189,7 +175,8 @@ export function replaceTabContent(
 
   if (isActive) {
     activeTab = tab;
-    view.setState(tab.state);
+    view.setModel(tab.state.model);
+    if (tab.state.viewState) view.restoreViewState(tab.state.viewState);
     lockGutterWidths(view);
     forceLayout(view);
     view.focus();

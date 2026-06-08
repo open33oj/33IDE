@@ -1,6 +1,14 @@
-import { autocompletion, Completion } from '@codemirror/autocomplete';
+import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 
-const cppKeywords: Completion[] = [
+type CompletionKind = 'keyword' | 'type' | 'function' | 'variable';
+
+interface CppCompletion {
+  label: string;
+  type: CompletionKind;
+  detail?: string;
+}
+
+const cppKeywords: CppCompletion[] = [
   { label: 'auto', type: 'keyword' },
   { label: 'break', type: 'keyword' },
   { label: 'case', type: 'keyword' },
@@ -62,10 +70,9 @@ const cppKeywords: Completion[] = [
   { label: 'wchar_t', type: 'keyword' },
   { label: 'size_t', type: 'keyword' },
   { label: 'long long', type: 'keyword' },
-  { label: 'typedef', type: 'keyword' },
 ];
 
-const stlContainers: Completion[] = [
+const stlContainers: CppCompletion[] = [
   { label: 'string', type: 'type', detail: 'std::string' },
   { label: 'vector', type: 'type', detail: 'std::vector' },
   { label: 'pair', type: 'type', detail: 'std::pair' },
@@ -86,7 +93,7 @@ const stlContainers: Completion[] = [
   { label: 'forward_list', type: 'type', detail: 'std::forward_list' },
 ];
 
-const stlFunctions: Completion[] = [
+const stlFunctions: CppCompletion[] = [
   { label: 'sort', type: 'function', detail: 'sort(begin, end)' },
   { label: 'stable_sort', type: 'function', detail: 'stable_sort(begin, end)' },
   { label: 'reverse', type: 'function', detail: 'reverse(begin, end)' },
@@ -134,7 +141,7 @@ const stlFunctions: Completion[] = [
   { label: 'stoll', type: 'function', detail: 'stoll(str)' },
 ];
 
-const iostreamItems: Completion[] = [
+const iostreamItems: CppCompletion[] = [
   { label: 'cin', type: 'variable', detail: 'std::cin' },
   { label: 'cout', type: 'variable', detail: 'std::cout' },
   { label: 'cerr', type: 'variable', detail: 'std::cerr' },
@@ -156,7 +163,7 @@ const iostreamItems: Completion[] = [
   { label: 'ostringstream', type: 'type', detail: 'std::ostringstream' },
 ];
 
-const gccBuiltins: Completion[] = [
+const gccBuiltins: CppCompletion[] = [
   { label: '__builtin_popcount', type: 'function', detail: 'popcount(x)' },
   { label: '__builtin_popcountll', type: 'function', detail: 'popcount(long long)' },
   { label: '__builtin_clz', type: 'function', detail: 'count leading zeros' },
@@ -167,7 +174,7 @@ const gccBuiltins: Completion[] = [
   { label: '__builtin_parity', type: 'function', detail: 'parity of bits' },
 ];
 
-const moreStl: Completion[] = [
+const moreStl: CppCompletion[] = [
   { label: 'nth_element', type: 'function', detail: 'nth_element(begin, nth, end)' },
   { label: 'partial_sort', type: 'function', detail: 'partial_sort(begin, middle, end)' },
   { label: 'make_heap', type: 'function', detail: 'make_heap(begin, end)' },
@@ -180,8 +187,6 @@ const moreStl: Completion[] = [
   { label: 'set_difference', type: 'function', detail: 'set_difference(...)' },
   { label: 'minmax', type: 'function', detail: 'minmax(a, b)' },
   { label: 'clamp', type: 'function', detail: 'clamp(val, lo, hi) C++17' },
-  { label: 'gcd', type: 'function', detail: 'gcd(a, b) C++17' },
-  { label: 'lcm', type: 'function', detail: 'lcm(a, b) C++17' },
   { label: 'midpoint', type: 'function', detail: 'midpoint(a, b) C++20' },
   { label: 'lerp', type: 'function', detail: 'lerp(a, b, t) C++20' },
   { label: 'ssize', type: 'function', detail: 'ssize(container) C++20' },
@@ -201,17 +206,34 @@ const moreStl: Completion[] = [
 
 const allCompletions = [...cppKeywords, ...stlContainers, ...stlFunctions, ...iostreamItems, ...gccBuiltins, ...moreStl];
 
-export function cppCompletion() {
-  return autocompletion({
-    override: [
-      (context) => {
-        const word = context.matchBefore(/\w*/);
-        if (!word || (word.from === word.to && !context.explicit)) return null;
-        return {
-          from: word.from,
-          options: allCompletions,
-        };
-      },
-    ],
+export function registerCppCompletion(monaco: typeof Monaco) {
+  monaco.languages.registerCompletionItemProvider('cpp', {
+    triggerCharacters: ['_', ':', '.'],
+    provideCompletionItems(model, position) {
+      const word = model.getWordUntilPosition(position);
+      const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
+      return {
+        suggestions: allCompletions.map((item) => ({
+          label: item.label,
+          kind: toMonacoKind(monaco, item.type),
+          insertText: item.label,
+          detail: item.detail,
+          range,
+        })),
+      };
+    },
   });
+}
+
+function toMonacoKind(monaco: typeof Monaco, kind: CompletionKind) {
+  switch (kind) {
+    case 'function':
+      return monaco.languages.CompletionItemKind.Function;
+    case 'type':
+      return monaco.languages.CompletionItemKind.Class;
+    case 'variable':
+      return monaco.languages.CompletionItemKind.Variable;
+    default:
+      return monaco.languages.CompletionItemKind.Keyword;
+  }
 }

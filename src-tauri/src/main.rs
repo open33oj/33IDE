@@ -10,10 +10,12 @@ use std::os::windows::process::CommandExt;
 mod settings;
 mod compiler;
 mod runner;
+mod clangd;
 
 use settings::Settings;
 use compiler::compile;
-use runner::run;
+use runner::{cancel_current_run, run};
+use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunResult {
@@ -69,6 +71,11 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
         exit_code: result.exit_code,
         time_ms: result.time_ms,
     })
+}
+
+#[tauri::command]
+fn cancel_run() -> Result<bool, String> {
+    Ok(cancel_current_run())
 }
 
 #[tauri::command]
@@ -167,11 +174,11 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
     let cf_candidates = vec![
-        exe_dir.join("tools").join("mingw64").join("bin").join("clang-format.exe"),
-        exe_dir.join("_up_").join("tools").join("mingw64").join("bin").join("clang-format.exe"),
-        exe_dir.join("resources").join("tools").join("mingw64").join("bin").join("clang-format.exe"),
-        exe_dir.join("..").join("..").join("..").join("tools").join("mingw64").join("bin").join("clang-format.exe"),
-        std::path::PathBuf::from("tools/mingw64/bin/clang-format.exe"),
+        exe_dir.join("tools").join("clang-format.exe"),
+        exe_dir.join("_up_").join("tools").join("clang-format.exe"),
+        exe_dir.join("resources").join("tools").join("clang-format.exe"),
+        exe_dir.join("..").join("..").join("..").join("tools").join("clang-format.exe"),
+        std::path::PathBuf::from("tools/clang-format.exe"),
     ];
 
     let cf_path = match cf_candidates.iter().find(|p| p.exists()) {
@@ -213,6 +220,48 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn clangd_complete(
+    state: tauri::State<'_, Mutex<clangd::ClangdClient>>,
+    code: String,
+    file_path: Option<String>,
+    line: u32,
+    character: u32,
+) -> Result<Vec<clangd::LspCompletionItem>, String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .complete(code, file_path, line, character)
+}
+
+#[tauri::command]
+fn clangd_hover(
+    state: tauri::State<'_, Mutex<clangd::ClangdClient>>,
+    code: String,
+    file_path: Option<String>,
+    line: u32,
+    character: u32,
+) -> Result<Option<String>, String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .hover(code, file_path, line, character)
+}
+
+#[tauri::command]
+fn clangd_signature_help(
+    state: tauri::State<'_, Mutex<clangd::ClangdClient>>,
+    code: String,
+    file_path: Option<String>,
+    line: u32,
+    character: u32,
+) -> Result<Option<clangd::LspSignature>, String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .signature_help(code, file_path, line, character)
+}
+
+#[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
@@ -226,10 +275,12 @@ fn main() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(Mutex::new(clangd::ClangdClient::default()))
         .invoke_handler(tauri::generate_handler![
             get_default_compiler_path,
             get_compiler_info,
             compile_and_run,
+            cancel_run,
             run_in_terminal,
             read_file,
             write_file,
@@ -238,6 +289,9 @@ fn main() {
             save_settings,
             read_template,
             format_code,
+            clangd_complete,
+            clangd_hover,
+            clangd_signature_help,
             exit_app,
         ]);
 

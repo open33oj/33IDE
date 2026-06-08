@@ -1,6 +1,6 @@
 export type UiLocale = 'zh-CN' | 'en-US';
 
-const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.9.1';
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.10.0';
 const APP_TITLE = `33IDE Lite v${APP_VERSION}`;
 
 const messages = {
@@ -30,12 +30,15 @@ const messages = {
     'toolbar.terminal': '终端运行',
     'toolbar.run': '运行 (F5)',
     'toolbar.running': '运行中...',
+    'toolbar.stop': '停止',
     'sidebar.input': '输入',
     'sidebar.output': '输出',
     'placeholder.stdin': '在此输入程序的 stdin 数据...',
     'output.idle': '点击“运行”或按 F5 编译运行代码',
     'output.compiling': '编译中...',
     'output.compileError': '编译错误:\n',
+    'output.cancelled': '运行已停止',
+    'output.timeout': '\n[运行超时: {time}ms]',
     'output.exitInfo': '\n[退出代码: {code}, 耗时: {time}ms]',
     'status.ready': '就绪',
     'status.settingsSaved': '设置已保存',
@@ -44,6 +47,9 @@ const messages = {
     'status.formatFailed': '格式化失败: {error}',
     'status.runSuccess': '运行成功',
     'status.runFailed': '运行失败',
+    'status.runCancelled': '运行已停止',
+    'status.runTimeout': '运行超时',
+    'status.noActiveRun': '没有正在运行的任务',
     'status.compileError': '编译错误',
     'status.error': '错误: {error}',
     'status.noSavedFile': '当前标签还没有保存到文件',
@@ -123,12 +129,15 @@ const messages = {
     'toolbar.terminal': 'Run In Terminal',
     'toolbar.run': 'Run (F5)',
     'toolbar.running': 'Running...',
+    'toolbar.stop': 'Stop',
     'sidebar.input': 'Input',
     'sidebar.output': 'Output',
     'placeholder.stdin': 'Enter stdin data here...',
     'output.idle': 'Click "Run" or press F5 to compile and run the code',
     'output.compiling': 'Compiling...',
     'output.compileError': 'Compile Error:\n',
+    'output.cancelled': 'Run stopped',
+    'output.timeout': '\n[Timeout: {time}ms]',
     'output.exitInfo': '\n[Exit Code: {code}, Time: {time}ms]',
     'status.ready': 'Ready',
     'status.settingsSaved': 'Settings saved',
@@ -137,6 +146,9 @@ const messages = {
     'status.formatFailed': 'Format failed: {error}',
     'status.runSuccess': 'Run succeeded',
     'status.runFailed': 'Run failed',
+    'status.runCancelled': 'Run stopped',
+    'status.runTimeout': 'Run timed out',
+    'status.noActiveRun': 'No active run',
     'status.compileError': 'Compile error',
     'status.error': 'Error: {error}',
     'status.noSavedFile': 'Current tab has no saved file',

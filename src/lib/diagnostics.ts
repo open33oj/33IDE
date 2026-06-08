@@ -1,12 +1,18 @@
-import { EditorView } from '@codemirror/view';
-import { linter, Diagnostic } from '@codemirror/lint';
-import { Compartment } from '@codemirror/state';
+import { EditorView, getModel, monaco } from '../editor-setup';
 
-export const linterCompartment = new Compartment();
+export interface Diagnostic {
+  from: number;
+  to: number;
+  severity: 'error' | 'warning' | 'info';
+  message: string;
+  line?: number;
+  col?: number;
+}
 
 let diagnostics: Diagnostic[] = [];
 
 const gccErrorRegex = /^(.+?):(\d+)(?::(\d+))?:\s*(error|warning|note):\s*(.+)$/;
+const MARKER_OWNER = '33ide-gcc';
 
 export function parseGccErrors(stderr: string): Diagnostic[] {
   const result: Diagnostic[] = [];
@@ -31,32 +37,37 @@ export function parseGccErrors(stderr: string): Diagnostic[] {
   return result;
 }
 
-function resolvePositions(view: EditorView, diags: Diagnostic[]): Diagnostic[] {
-  const doc = view.state.doc;
-  return diags.map(d => {
-    const line = Math.min(d.line ?? 1, doc.lines);
-    const lineObj = doc.line(line);
-    const col = Math.max(1, d.col ?? 1);
-    const from = Math.min(lineObj.from + col - 1, lineObj.to);
-    return { ...d, from, to: Math.min(from + 1, lineObj.to) };
-  });
-}
-
 export function setDiagnostics(view: EditorView, diags: Diagnostic[]) {
-  diagnostics = resolvePositions(view, diags);
-  view.dispatch({
-    effects: linterCompartment.reconfigure(linter(() => diagnostics)),
-  });
+  const model = getModel(view);
+  diagnostics = diags;
+  monaco.editor.setModelMarkers(model, MARKER_OWNER, diags.map((diag) => {
+    const lineNumber = Math.max(1, Math.min(diag.line ?? 1, model.getLineCount()));
+    const maxColumn = model.getLineMaxColumn(lineNumber);
+    const startColumn = Math.max(1, Math.min(diag.col ?? 1, maxColumn));
+    return {
+      severity: toMarkerSeverity(diag.severity),
+      message: diag.message,
+      startLineNumber: lineNumber,
+      startColumn,
+      endLineNumber: lineNumber,
+      endColumn: Math.min(startColumn + 1, maxColumn),
+    };
+  }));
 }
 
 export function clearDiagnostics(view: EditorView) {
   if (diagnostics.length === 0) return;
   diagnostics = [];
-  view.dispatch({
-    effects: linterCompartment.reconfigure(linter(() => diagnostics)),
-  });
+  monaco.editor.setModelMarkers(getModel(view), MARKER_OWNER, []);
 }
 
-export function createLinterExtension() {
-  return linterCompartment.of(linter(() => diagnostics));
+function toMarkerSeverity(severity: Diagnostic['severity']) {
+  switch (severity) {
+    case 'error':
+      return monaco.MarkerSeverity.Error;
+    case 'warning':
+      return monaco.MarkerSeverity.Warning;
+    default:
+      return monaco.MarkerSeverity.Info;
+  }
 }

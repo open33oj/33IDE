@@ -15,11 +15,6 @@ export default defineConfig({
     modulePreload: false,
   },
   define: {
-    'import.meta.env.VITE_APP_VERSION': JSON.stringify(process.env.npm_package_version || '0.9.1'),
-    'import.meta.env.VITE_EDITION': JSON.stringify(process.env.VITE_EDITION || 'basic'),
-    'import.meta.env.VITE_FEATURE_CPH': JSON.stringify(process.env.VITE_FEATURE_CPH || 'false'),
-    'import.meta.env.VITE_FEATURE_BROWSER': JSON.stringify(process.env.VITE_FEATURE_BROWSER || 'false'),
-    'import.meta.env.VITE_FEATURE_AI_TRANSLATE': JSON.stringify(process.env.VITE_FEATURE_AI_TRANSLATE || 'false'),
-    'import.meta.env.VITE_FEATURE_AI_SUGGEST': JSON.stringify(process.env.VITE_FEATURE_AI_SUGGEST || 'false'),
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(process.env.npm_package_version || '0.10.0'),
   },
 });

@@ -1,25 +1,34 @@
-import { EditorView } from '@codemirror/view';
 import { diffChars } from 'diff';
+import { getCursorOffset, getEditorValue, getModel, monaco, setCursorOffset } from '../editor-setup';
 import { api, RunResult } from './api';
 import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
 import { t } from './i18n';
 import { getActiveTab, getView } from './tabs';
 import { appendOutput, setStatus, showOutput, switchToOutput } from './ui';
 
+let runActive = false;
+let stopRequested = false;
+
+function setRunButtonState(running: boolean) {
+  const btn = document.getElementById('btn-run') as HTMLButtonElement | null;
+  if (!btn) return;
+
+  btn.disabled = false;
+  btn.classList.toggle('primary', !running);
+  btn.classList.toggle('danger', running);
+  btn.textContent = running ? t('toolbar.stop') : t('toolbar.run');
+}
+
 export async function formatCurrentCode() {
   const view = getView();
-  const code = view.state.doc.toString();
-  const cursorPos = view.state.selection.main.head;
+  const code = getEditorValue(view);
+  const cursorPos = getCursorOffset(view);
 
   try {
     const formatted = await api.formatCode(code, 4);
     if (formatted !== code) {
       const newPos = calcCursorPosition(code, formatted, cursorPos);
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: formatted },
-        selection: { anchor: newPos },
-        effects: EditorView.scrollIntoView(newPos, { y: 'center' }),
-      });
+      applyFormattedCode(view, code, formatted, newPos);
 
       const tab = getActiveTab();
       if (tab) tab.dirty = true;
@@ -30,6 +39,52 @@ export async function formatCurrentCode() {
   } catch (e: any) {
     setStatus(t('status.formatFailed', { error: String(e) }), 'error');
   }
+}
+
+function applyFormattedCode(view: ReturnType<typeof getView>, oldCode: string, newCode: string, cursorOffset: number) {
+  const model = getModel(view);
+  const changes = diffChars(oldCode, newCode);
+  const edits: monaco.editor.IIdentifiedSingleEditOperation[] = [];
+  let oldIndex = 0;
+
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i];
+    const len = change.count || change.value.length;
+
+    if (!change.added && !change.removed) {
+      oldIndex += len;
+      continue;
+    }
+
+    if (change.removed) {
+      const next = changes[i + 1];
+      const insert = next?.added ? next.value : '';
+      const from = model.getPositionAt(oldIndex);
+      const to = model.getPositionAt(oldIndex + len);
+      edits.push({
+        range: new monaco.Range(from.lineNumber, from.column, to.lineNumber, to.column),
+        text: insert,
+        forceMoveMarkers: true,
+      });
+      oldIndex += len;
+      if (next?.added) i += 1;
+      continue;
+    }
+
+    if (change.added) {
+      const position = model.getPositionAt(oldIndex);
+      edits.push({
+        range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+        text: change.value,
+        forceMoveMarkers: true,
+      });
+    }
+  }
+
+  if (edits.length) {
+    view.executeEdits('clang-format', edits);
+  }
+  setCursorOffset(view, cursorOffset);
 }
 
 function calcCursorPosition(oldCode: string, newCode: string, oldPos: number): number {
@@ -66,13 +121,18 @@ function calcCursorPosition(oldCode: string, newCode: string, oldPos: number): n
 }
 
 export async function runCode() {
-  const view = getView();
-  const code = view.state.doc.toString();
-  const input = (document.getElementById('input-area') as HTMLTextAreaElement).value;
-  const btn = document.getElementById('btn-run') as HTMLButtonElement;
+  if (runActive) {
+    await stopRunningCode();
+    return;
+  }
 
-  btn.disabled = true;
-  btn.textContent = t('toolbar.running');
+  const view = getView();
+  const code = getEditorValue(view);
+  const input = (document.getElementById('input-area') as HTMLTextAreaElement).value;
+
+  runActive = true;
+  stopRequested = false;
+  setRunButtonState(true);
   clearDiagnostics(view);
   switchToOutput();
   showOutput(`<span class="info">${t('output.compiling')}</span>`);
@@ -83,14 +143,28 @@ export async function runCode() {
   } catch (e: any) {
     showOutput('');
     appendOutput(t('status.error', { error: String(e) }), 'error');
+  } finally {
+    runActive = false;
+    stopRequested = false;
+    setRunButtonState(false);
   }
+}
 
-  btn.disabled = false;
-  btn.textContent = t('toolbar.run');
+export async function stopRunningCode() {
+  if (!runActive || stopRequested) return;
+  stopRequested = true;
+  try {
+    const stopped = await api.cancelRun();
+    if (!stopped) stopRequested = false;
+    setStatus(stopped ? t('status.runCancelled') : t('status.noActiveRun'), stopped ? 'info' : 'error');
+  } catch (e: any) {
+    stopRequested = false;
+    setStatus(t('status.error', { error: String(e) }), 'error');
+  }
 }
 
 export async function runInTerminal() {
-  const code = getView().state.doc.toString();
+  const code = getEditorValue(getView());
   try {
     const result = await api.runInTerminal(code);
     if (!result.ok) {
@@ -120,6 +194,22 @@ function renderRunResult(result: RunResult) {
     if (diags.length > 0) {
       setDiagnostics(view, diags);
     }
+    return;
+  }
+
+  if (result.status === 'cancelled') {
+    output.textContent = '';
+    appendOutput(t('output.cancelled'), 'info');
+    setStatus(t('status.runCancelled'), 'info');
+    return;
+  }
+
+  if (result.status === 'timeout') {
+    output.textContent = '';
+    appendOutput(result.stdout || '', 'success');
+    if (result.stderr) appendOutput(result.stderr, 'error');
+    appendOutput(t('output.timeout', { time: result.time_ms }), 'error');
+    setStatus(t('status.runTimeout'), 'error');
     return;
   }
 

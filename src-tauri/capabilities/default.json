@@ -7,8 +7,10 @@
     "core:default",
     "dialog:allow-open",
     "dialog:allow-save",
+    "dialog:allow-confirm",
     "dialog:allow-message",
     "dialog:default",
+    "core:webview:allow-set-webview-zoom",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text"
   ]
