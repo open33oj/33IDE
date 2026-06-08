@@ -273,6 +273,29 @@ pub fn detect_clangd() -> String {
     "clangd".to_string()
 }
 
+pub fn compiler_bin_dir(settings: &Settings) -> Option<PathBuf> {
+    let compiler = detect_compiler(settings);
+    let compiler_path = PathBuf::from(compiler);
+    let parent = compiler_path.parent()?;
+    if parent.as_os_str().is_empty() {
+        None
+    } else {
+        Some(parent.to_path_buf())
+    }
+}
+
+pub fn path_with_compiler_bin(settings: &Settings) -> Option<String> {
+    let bin_dir = compiler_bin_dir(settings)?;
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let separator = if cfg!(windows) { ";" } else { ":" };
+
+    if current_path.is_empty() {
+        Some(bin_dir.to_string_lossy().to_string())
+    } else {
+        Some(format!("{}{}{}", bin_dir.display(), separator, current_path))
+    }
+}
+
 /// Dynamically find the GCC libexec directory containing cc1plus.
 /// Scans the libexec/gcc/<target>/ directory for version subfolders
 /// instead of hardcoding a specific version.
@@ -334,15 +357,21 @@ pub fn compile(src: &PathBuf, out: &PathBuf, settings: &Settings) -> CompileResu
     args.push(src.to_string_lossy().to_string());
 
     let output = if cfg!(target_os = "windows") {
-        let bin_dir = compiler_dir.to_string_lossy().to_string();
-        let current_path = std::env::var("PATH").unwrap_or_default();
-        Command::new(&compiler)
-            .args(&args)
-            .env("PATH", format!("{};{}", bin_dir, current_path))
+        let mut command = Command::new(&compiler);
+        command.args(&args);
+        if let Some(path) = path_with_compiler_bin(settings) {
+            command.env("PATH", path);
+        }
+        command
             .creation_flags(0x00000008) // CREATE_NO_WINDOW
             .output()
     } else {
-        Command::new(&compiler).args(&args).output()
+        let mut command = Command::new(&compiler);
+        command.args(&args);
+        if let Some(path) = path_with_compiler_bin(settings) {
+            command.env("PATH", path);
+        }
+        command.output()
     };
 
     match output {

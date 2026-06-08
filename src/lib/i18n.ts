@@ -1,6 +1,6 @@
 export type UiLocale = 'zh-CN' | 'en-US';
 
-const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.10.0';
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.10.1';
 const APP_TITLE = `33IDE Lite v${APP_VERSION}`;
 
 const messages = {
@@ -36,6 +36,7 @@ const messages = {
     'placeholder.stdin': '在此输入程序的 stdin 数据...',
     'output.idle': '点击“运行”或按 F5 编译运行代码',
     'output.compiling': '编译中...',
+    'output.running': '运行中...',
     'output.compileError': '编译错误:\n',
     'output.cancelled': '运行已停止',
     'output.timeout': '\n[运行超时: {time}ms]',
@@ -135,6 +136,7 @@ const messages = {
     'placeholder.stdin': 'Enter stdin data here...',
     'output.idle': 'Click "Run" or press F5 to compile and run the code',
     'output.compiling': 'Compiling...',
+    'output.running': 'Running...',
     'output.compileError': 'Compile Error:\n',
     'output.cancelled': 'Run stopped',
     'output.timeout': '\n[Timeout: {time}ms]',

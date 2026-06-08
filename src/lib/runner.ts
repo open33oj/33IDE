@@ -1,4 +1,5 @@
 import { diffChars } from 'diff';
+import { listen } from '@tauri-apps/api/event';
 import { getCursorOffset, getEditorValue, getModel, monaco, setCursorOffset } from '../editor-setup';
 import { api, RunResult } from './api';
 import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
@@ -8,6 +9,24 @@ import { appendOutput, setStatus, showOutput, switchToOutput } from './ui';
 
 let runActive = false;
 let stopRequested = false;
+let runListenersReady: Promise<void> | null = null;
+
+interface RunPhaseEvent {
+  phase: 'compiling' | 'running';
+}
+
+interface RunOutputEvent {
+  stream: 'stdout' | 'stderr';
+  text: string;
+}
+
+interface RunFinishedEvent {
+  status: string;
+  stderr: string;
+  raw_stderr: string;
+  exit_code: number | null;
+  time_ms: number;
+}
 
 function setRunButtonState(running: boolean) {
   const btn = document.getElementById('btn-run') as HTMLButtonElement | null;
@@ -133,17 +152,16 @@ export async function runCode() {
   runActive = true;
   stopRequested = false;
   setRunButtonState(true);
-  clearDiagnostics(view);
-  switchToOutput();
-  showOutput(`<span class="info">${t('output.compiling')}</span>`);
 
   try {
-    const result = await api.compileAndRun(code, input || undefined);
-    renderRunResult(result);
+    await ensureRunListeners();
+    clearDiagnostics(view);
+    switchToOutput();
+    showOutput(`<span class="info">${t('output.compiling')}</span>`);
+    await api.startCompileAndRun(code, input || undefined);
   } catch (e: any) {
     showOutput('');
     appendOutput(t('status.error', { error: String(e) }), 'error');
-  } finally {
     runActive = false;
     stopRequested = false;
     setRunButtonState(false);
@@ -161,6 +179,85 @@ export async function stopRunningCode() {
     stopRequested = false;
     setStatus(t('status.error', { error: String(e) }), 'error');
   }
+}
+
+function ensureRunListeners() {
+  if (runListenersReady) return runListenersReady;
+
+  runListenersReady = Promise.all([
+    listen<RunPhaseEvent>('run-phase', (event) => {
+      if (!runActive) return;
+      if (event.payload.phase === 'running') {
+        showOutput(`<span class="info">${t('output.running')}</span>\n`);
+        setStatus(t('toolbar.running'), 'info');
+      } else {
+        showOutput(`<span class="info">${t('output.compiling')}</span>`);
+      }
+    }),
+    listen<RunOutputEvent>('run-output', (event) => {
+      if (!runActive || !event.payload.text) return;
+      appendOutput(event.payload.text, event.payload.stream === 'stderr' ? 'error' : undefined);
+    }),
+    listen<RunFinishedEvent>('run-finished', (event) => {
+      if (!runActive) return;
+      renderStreamingRunResult(event.payload);
+      runActive = false;
+      stopRequested = false;
+      setRunButtonState(false);
+    }),
+  ]).then(() => undefined);
+
+  return runListenersReady;
+}
+
+function renderStreamingRunResult(result: RunFinishedEvent) {
+  const output = document.getElementById('output-content')!;
+
+  if (result.status === 'compile_error') {
+    output.textContent = '';
+    const errLabel = document.createElement('span');
+    errLabel.className = 'error';
+    errLabel.textContent = t('output.compileError');
+    output.appendChild(errLabel);
+    output.appendChild(document.createTextNode(result.stderr || ''));
+    setStatus(t('status.compileError'), 'error');
+
+    const view = getView();
+    const diags = parseGccErrors(result.raw_stderr || result.stderr || '');
+    if (diags.length > 0) {
+      setDiagnostics(view, diags);
+    }
+    return;
+  }
+
+  if (result.status === 'cancelled') {
+    appendOutput(`\n${t('output.cancelled')}`, 'info');
+    setStatus(t('status.runCancelled'), 'info');
+    return;
+  }
+
+  if (result.status === 'timeout') {
+    appendOutput(t('output.timeout', { time: result.time_ms }), 'error');
+    setStatus(t('status.runTimeout'), 'error');
+    return;
+  }
+
+  if (result.status === 'error') {
+    appendOutput(result.stderr || '', 'error');
+    setStatus(t('status.error', { error: result.stderr || result.status }), 'error');
+    return;
+  }
+
+  const cls = result.exit_code === 0 ? 'success' : 'error';
+  appendOutput(t('output.exitInfo', {
+    code: result.exit_code ?? '-',
+    time: result.time_ms,
+  }), cls);
+
+  setStatus(
+    result.exit_code === 0 ? t('status.runSuccess') : t('status.runFailed'),
+    result.exit_code === 0 ? 'success' : 'error',
+  );
 }
 
 export async function runInTerminal() {

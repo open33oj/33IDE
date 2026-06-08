@@ -1,7 +1,6 @@
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline';
 import { conf as cppConf, language as cppLanguage } from 'monaco-editor/esm/vs/basic-languages/cpp/cpp';
-import { registerCppCompletion } from './lib/cpp-completion';
 import { defineMonacoThemes, getTheme, themes } from './lib/themes';
 
 (self as any).MonacoEnvironment = {
@@ -36,7 +35,6 @@ export function bootstrapMonaco() {
   monacoBootstrapped = true;
   registerCppLanguage();
   defineMonacoThemes(monaco);
-  registerCppCompletion(monaco);
   warmCppTokenizer();
 }
 
@@ -76,13 +74,19 @@ export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty:
     wordWrap: 'off',
     dragAndDrop: true,
     dropIntoEditor: { enabled: false },
-    autoIndent: 'none',
+    autoIndent: 'advanced',
     bracketPairColorization: { enabled: true },
     autoClosingBrackets: 'always',
     autoClosingQuotes: 'always',
     formatOnPaste: false,
     formatOnType: false,
     contextmenu: false,
+    quickSuggestions: {
+      other: true,
+      comments: false,
+      strings: false,
+    },
+    suggestOnTriggerCharacters: true,
     hideCursorInOverviewRuler: true,
     overviewRulerLanes: 0,
     overviewRulerBorder: false,
@@ -263,7 +267,7 @@ export function lockGutterWidths(_view: EditorView) {
 export function installEditorKeybindings(view: EditorView) {
   view.onKeyDown((event) => {
     if (event.keyCode === monaco.KeyCode.Enter) {
-      if (handleEnterBetweenBraces(view)) {
+      if (handleSmartEnter(view)) {
         event.preventDefault();
       }
     }
@@ -278,7 +282,7 @@ function normalizeTabSize(tabSize: number) {
   return Math.max(1, Math.min(8, tabSize || 4));
 }
 
-function handleEnterBetweenBraces(view: EditorView): boolean {
+function handleSmartEnter(view: EditorView): boolean {
   const model = view.getModel();
   const position = view.getPosition();
   const selection = view.getSelection();
@@ -286,11 +290,19 @@ function handleEnterBetweenBraces(view: EditorView): boolean {
 
   const offset = model.getOffsetAt(position);
   const code = model.getValue();
-  if (code[offset - 1] !== '{' || code[offset] !== '}') return false;
-
   const line = model.getLineContent(position.lineNumber);
   const indent = line.match(/^(\s*)/)?.[1] || '';
   const extra = ' '.repeat(currentTabSize);
+
+  if (code[offset - 1] !== '{') return false;
+
+  if (code[offset] !== '}') {
+    const text = '\n' + indent + extra;
+    view.executeEdits('33ide', [{ range: selection, text, forceMoveMarkers: true }]);
+    setCursorOffset(view, offset + text.length);
+    return true;
+  }
+
   const text = '\n' + indent + extra + '\n' + indent;
   view.executeEdits('33ide', [{ range: selection, text, forceMoveMarkers: true }]);
   setCursorOffset(view, offset + 1 + indent.length + extra.length);

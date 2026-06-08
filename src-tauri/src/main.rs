@@ -2,7 +2,9 @@
 
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -14,8 +16,10 @@ mod clangd;
 
 use settings::Settings;
 use compiler::compile;
-use runner::{cancel_current_run, run};
+use runner::{cancel_current_run, run, run_streaming};
 use std::sync::Mutex;
+
+static RUN_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunResult {
@@ -38,6 +42,26 @@ fn get_default_compiler_path() -> Result<String, String> {
     let mut settings = Settings::load();
     settings.compiler_path.clear();
     Ok(compiler::detect_compiler(&settings))
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RunPhasePayload {
+    pub phase: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RunOutputPayload {
+    pub stream: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RunFinishedPayload {
+    pub status: String,
+    pub stderr: String,
+    pub raw_stderr: String,
+    pub exit_code: Option<i32>,
+    pub time_ms: u128,
 }
 
 #[tauri::command]
@@ -74,6 +98,97 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
 }
 
 #[tauri::command]
+fn start_compile_and_run(app: AppHandle, code: String, input: Option<String>) -> Result<(), String> {
+    if RUN_TASK_ACTIVE.swap(true, Ordering::SeqCst) {
+        return Err("A run task is already active".to_string());
+    }
+
+    std::thread::spawn(move || {
+        let result = compile_and_run_streaming(app.clone(), code, input);
+        if let Err(error) = result {
+            let _ = app.emit(
+                "run-finished",
+                RunFinishedPayload {
+                    status: "error".to_string(),
+                    stderr: error.clone(),
+                    raw_stderr: error,
+                    exit_code: None,
+                    time_ms: 0,
+                },
+            );
+        }
+        RUN_TASK_ACTIVE.store(false, Ordering::SeqCst);
+    });
+
+    Ok(())
+}
+
+fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>) -> Result<(), String> {
+    let _ = app.emit(
+        "run-phase",
+        RunPhasePayload {
+            phase: "compiling".to_string(),
+        },
+    );
+
+    let settings = Settings::load();
+    let tmp_dir = std::env::temp_dir().join("33ide");
+    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let src = tmp_dir.join("sol.cpp");
+    let bin = tmp_dir.join(if cfg!(windows) { "sol.exe" } else { "sol" });
+    fs::write(&src, &code).map_err(|e| e.to_string())?;
+
+    let cr = compile(&src, &bin, &settings);
+    if !cr.success {
+        let _ = fs::remove_file(&src);
+        let _ = app.emit(
+            "run-finished",
+            RunFinishedPayload {
+                status: "compile_error".to_string(),
+                stderr: cr.error.unwrap_or_default(),
+                raw_stderr: cr.raw_error.unwrap_or_default(),
+                exit_code: None,
+                time_ms: 0,
+            },
+        );
+        return Ok(());
+    }
+
+    let _ = app.emit(
+        "run-phase",
+        RunPhasePayload {
+            phase: "running".to_string(),
+        },
+    );
+
+    let result = run_streaming(&bin, &input.unwrap_or_default(), &settings, |stream, text| {
+        let _ = app.emit(
+            "run-output",
+            RunOutputPayload {
+                stream: stream.to_string(),
+                text: text.to_string(),
+            },
+        );
+    });
+
+    let _ = fs::remove_file(&src);
+    let _ = fs::remove_file(&bin);
+
+    let _ = app.emit(
+        "run-finished",
+        RunFinishedPayload {
+            status: result.status,
+            stderr: result.stderr.clone(),
+            raw_stderr: result.stderr,
+            exit_code: result.exit_code,
+            time_ms: result.time_ms,
+        },
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
 fn cancel_run() -> Result<bool, String> {
     Ok(cancel_current_run())
 }
@@ -93,15 +208,21 @@ fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
     }
     if cfg!(windows) {
         let bat = tmp_dir.join("run.bat");
+        let path_line = compiler::compiler_bin_dir(&settings)
+            .map(|dir| format!("set \"PATH={};%PATH%\"\r\n", dir.display()))
+            .unwrap_or_default();
         fs::write(&bat, format!(
-            "@echo off\r\ncd /d \"{}\"\r\n\"{}\"\r\necho.\r\npause\r\n",
+            "@echo off\r\nchcp 65001 >nul\r\nset LANG=zh_CN.UTF-8\r\nset LC_ALL=zh_CN.UTF-8\r\n{}cd /d \"{}\"\r\n\"{}\"\r\necho.\r\npause\r\n",
+            path_line,
             bin.parent().unwrap_or(&tmp_dir).display(),
             bin.display()
         )).map_err(|e| e.to_string())?;
-        Command::new("cmd.exe")
-            .args(&["/c", "start", "cmd.exe", "/c", &bat.to_string_lossy()])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut command = Command::new("cmd.exe");
+        command.args(&["/c", "start", "", "cmd.exe", "/d", "/c", &bat.to_string_lossy()]);
+        if let Some(path) = compiler::path_with_compiler_bin(&settings) {
+            command.env("PATH", path);
+        }
+        command.spawn().map_err(|e| e.to_string())?;
     } else {
         Command::new("open")
             .args(&["-a", "Terminal", &bin.to_string_lossy()])
@@ -280,6 +401,7 @@ fn main() {
             get_default_compiler_path,
             get_compiler_info,
             compile_and_run,
+            start_compile_and_run,
             cancel_run,
             run_in_terminal,
             read_file,
