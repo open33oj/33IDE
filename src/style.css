@@ -100,6 +100,30 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 }
 .theme-dark #editor { background: #1e1e1e; }
 .theme-light #editor { background: #fff; }
+.compiler-line-error { background: rgba(244, 71, 71, 0.12); }
+.compiler-line-warning { background: rgba(204, 167, 0, 0.12); }
+.theme-light .compiler-line-error { background: rgba(211, 32, 41, 0.10); }
+.theme-light .compiler-line-warning { background: rgba(173, 127, 0, 0.12); }
+.compiler-glyph-error,
+.compiler-glyph-warning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.compiler-glyph-error::before {
+  content: "×";
+  color: #f44747;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+.compiler-glyph-warning::before {
+  content: "!";
+  color: #cca700;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
 
 /* Resizer */
 .resizer { width: 5px; background: #3c3c3c; cursor: col-resize; flex-shrink: 0; }

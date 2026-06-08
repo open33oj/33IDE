@@ -204,7 +204,11 @@ fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
     let cr = compile(&src, &bin, &settings);
     let _ = fs::remove_file(&src);
     if !cr.success {
-        return Ok(serde_json::json!({ "ok": false, "error": cr.error.unwrap_or_default() }));
+        return Ok(serde_json::json!({
+            "ok": false,
+            "error": cr.error.unwrap_or_default(),
+            "raw_error": cr.raw_error.unwrap_or_default(),
+        }));
     }
     if cfg!(windows) {
         let bat = tmp_dir.join("run.bat");

@@ -58,7 +58,7 @@ export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty:
     minimap: { enabled: false },
     stickyScroll: { enabled: false },
     folding: true,
-    glyphMargin: false,
+    glyphMargin: true,
     lineNumbers: 'on',
     roundedSelection: false,
     selectionHighlight: false,

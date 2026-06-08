@@ -2,7 +2,7 @@ import { diffChars } from 'diff';
 import { listen } from '@tauri-apps/api/event';
 import { getCursorOffset, getEditorValue, getModel, monaco, setCursorOffset } from '../editor-setup';
 import { api, RunResult } from './api';
-import { clearDiagnostics, setDiagnostics, parseGccErrors } from './diagnostics';
+import { clearDiagnostics, setDiagnostics, parseGccErrors, formatCompilerDiagnostics } from './diagnostics';
 import { t } from './i18n';
 import { getActiveTab, getView } from './tabs';
 import { appendOutput, setStatus, showOutput, switchToOutput } from './ui';
@@ -219,7 +219,7 @@ function renderStreamingRunResult(result: RunFinishedEvent) {
     errLabel.className = 'error';
     errLabel.textContent = t('output.compileError');
     output.appendChild(errLabel);
-    output.appendChild(document.createTextNode(result.stderr || ''));
+    output.appendChild(document.createTextNode(formatCompilerDiagnostics(result.raw_stderr || result.stderr || '')));
     setStatus(t('status.compileError'), 'error');
 
     const view = getView();
@@ -261,13 +261,20 @@ function renderStreamingRunResult(result: RunFinishedEvent) {
 }
 
 export async function runInTerminal() {
-  const code = getEditorValue(getView());
+  const view = getView();
+  const code = getEditorValue(view);
+  clearDiagnostics(view);
   try {
     const result = await api.runInTerminal(code);
     if (!result.ok) {
+      const rawError = result.raw_error || result.error || '';
       switchToOutput();
       showOutput('');
-      appendOutput(t('output.compileError') + (result.error || ''), 'error');
+      appendOutput(t('output.compileError') + formatCompilerDiagnostics(rawError), 'error');
+      const diags = parseGccErrors(rawError);
+      if (diags.length > 0) {
+        setDiagnostics(view, diags);
+      }
     }
   } catch (e: any) {
     setStatus(t('status.error', { error: String(e) }), 'error');
@@ -283,7 +290,7 @@ function renderRunResult(result: RunResult) {
     errLabel.className = 'error';
     errLabel.textContent = t('output.compileError');
     output.appendChild(errLabel);
-    output.appendChild(document.createTextNode(result.stderr || ''));
+    output.appendChild(document.createTextNode(formatCompilerDiagnostics(result.raw_stderr || result.stderr || '')));
     setStatus(t('status.compileError'), 'error');
 
     const view = getView();

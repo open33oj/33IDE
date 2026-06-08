@@ -1,6 +1,6 @@
 export type UiLocale = 'zh-CN' | 'en-US';
 
-const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.10.1';
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.10.2';
 const APP_TITLE = `33IDE Lite v${APP_VERSION}`;
 
 const messages = {
