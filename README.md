@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | Monaco Editor | `0.55.1` | `node_modules/monaco-editor` |
 | clangd | `22.1.0` | `tools/clangd.exe` |
-| clang-format | `15.0.0` | `tools/clang-format.exe` |
+| clang-format | `22.1.6` | `tools/clang-format.exe` |
 | MinGW g++ | `9.3.0` | `tools/mingw64/bin/g++.exe` |
 
 ## 更新日志
