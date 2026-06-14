@@ -10,6 +10,7 @@ import { appendOutput, setStatus, showOutput, switchToOutput } from './ui';
 let runActive = false;
 let stopRequested = false;
 let runListenersReady: Promise<void> | null = null;
+let outputWaitingForFirstChunk = false;
 
 interface RunPhaseEvent {
   phase: 'compiling' | 'running';
@@ -157,6 +158,7 @@ export async function runCode() {
     await ensureRunListeners();
     clearDiagnostics(view);
     switchToOutput();
+    outputWaitingForFirstChunk = false;
     showOutput(`<span class="info">${t('output.compiling')}</span>`);
     await api.startCompileAndRun(code, input || undefined);
   } catch (e: any) {
@@ -188,18 +190,25 @@ function ensureRunListeners() {
     listen<RunPhaseEvent>('run-phase', (event) => {
       if (!runActive) return;
       if (event.payload.phase === 'running') {
+        outputWaitingForFirstChunk = true;
         showOutput(`<span class="info">${t('output.running')}</span>\n`);
         setStatus(t('toolbar.running'), 'info');
       } else {
+        outputWaitingForFirstChunk = false;
         showOutput(`<span class="info">${t('output.compiling')}</span>`);
       }
     }),
     listen<RunOutputEvent>('run-output', (event) => {
       if (!runActive || !event.payload.text) return;
+      if (outputWaitingForFirstChunk) {
+        showOutput('');
+        outputWaitingForFirstChunk = false;
+      }
       appendOutput(event.payload.text, event.payload.stream === 'stderr' ? 'error' : undefined);
     }),
     listen<RunFinishedEvent>('run-finished', (event) => {
       if (!runActive) return;
+      outputWaitingForFirstChunk = false;
       renderStreamingRunResult(event.payload);
       runActive = false;
       stopRequested = false;
@@ -239,6 +248,13 @@ function renderStreamingRunResult(result: RunFinishedEvent) {
   if (result.status === 'timeout') {
     appendOutput(t('output.timeout', { time: result.time_ms }), 'error');
     setStatus(t('status.runTimeout'), 'error');
+    return;
+  }
+
+  if (result.status === 'interactive_console_required') {
+    output.textContent = '';
+    appendOutput(t('output.interactiveConsoleRequired'), 'error');
+    setStatus(t('status.interactiveConsoleRequired'), 'error');
     return;
   }
 

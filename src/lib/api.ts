@@ -31,6 +31,13 @@ export interface ClangdCompletionItem {
   detail?: string;
   insert_text?: string;
   kind?: number;
+  text_edit?: {
+    new_text: string;
+    start_line: number;
+    start_character: number;
+    end_line: number;
+    end_character: number;
+  };
 }
 
 export interface ClangdSignature {
@@ -48,6 +55,7 @@ export const api = {
   startCompileAndRun: (code: string, input?: string) => invoke<void>('start_compile_and_run', { code, input }),
   cancelRun: () => invoke<boolean>('cancel_run'),
   runInTerminal: (code: string) => invoke<{ ok: boolean; error?: string; raw_error?: string }>('run_in_terminal', { code }),
+  openRunCacheDir: () => invoke<void>('open_run_cache_dir'),
   readFile: (path: string) => invoke<string>('read_file', { path }),
   writeFile: (path: string, content: string) => invoke<void>('write_file', { path, content }),
   revealInExplorer: (path: string) => invoke<void>('reveal_in_explorer', { path }),

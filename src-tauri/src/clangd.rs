@@ -18,6 +18,16 @@ pub struct LspCompletionItem {
     pub detail: Option<String>,
     pub insert_text: Option<String>,
     pub kind: Option<u64>,
+    pub text_edit: Option<LspTextEdit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspTextEdit {
+    pub new_text: String,
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,19 +338,41 @@ fn parse_completion_items(result: Value) -> Vec<LspCompletionItem> {
         .into_iter()
         .filter_map(|item| {
             let label = item.get("label")?.as_str()?.to_string();
-            let insert_text = item
-                .get("insertText")
-                .and_then(Value::as_str)
-                .or_else(|| item.get("textEdit").and_then(|edit| edit.get("newText")).and_then(Value::as_str))
-                .map(|s| s.to_string());
+            let text_edit = parse_text_edit(item.get("textEdit"));
+            let insert_text = text_edit
+                .as_ref()
+                .map(|edit| edit.new_text.clone())
+                .or_else(|| item.get("insertText").and_then(Value::as_str).map(|s| s.to_string()));
             Some(LspCompletionItem {
                 label,
                 detail: item.get("detail").and_then(Value::as_str).map(|s| s.to_string()),
                 insert_text,
                 kind: item.get("kind").and_then(Value::as_u64),
+                text_edit,
             })
         })
         .collect()
+}
+
+fn parse_text_edit(value: Option<&Value>) -> Option<LspTextEdit> {
+    let value = value?;
+    let new_text = value.get("newText")?.as_str()?.to_string();
+
+    // Support plain textEdit and insert/replace edit shapes.
+    let range = value
+        .get("range")
+        .or_else(|| value.get("insert"))?;
+
+    let start = range.get("start")?;
+    let end = range.get("end")?;
+
+    Some(LspTextEdit {
+        new_text,
+        start_line: start.get("line")?.as_u64()? as u32,
+        start_character: start.get("character")?.as_u64()? as u32,
+        end_line: end.get("line")?.as_u64()? as u32,
+        end_character: end.get("character")?.as_u64()? as u32,
+    })
 }
 
 fn parse_markup(value: Option<&Value>) -> Option<String> {

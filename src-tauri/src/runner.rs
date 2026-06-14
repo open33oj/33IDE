@@ -32,27 +32,32 @@ fn set_current_run_pid(pid: Option<u32>) {
     }
 }
 
+fn kill_process_tree(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x00000008)
+            .output()
+            .is_ok()
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output()
+            .is_ok()
+    }
+}
+
 pub fn cancel_current_run() -> bool {
     RUN_CANCELLED.store(true, Ordering::SeqCst);
     let pid = run_pid_slot().lock().ok().and_then(|slot| *slot);
     let Some(pid) = pid else {
         return false;
     };
-
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x00000008)
-            .output();
-        true
-    }
-
-    #[cfg(not(windows))]
-    {
-        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).output();
-        true
-    }
+    kill_process_tree(pid)
 }
 
 pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
@@ -87,13 +92,13 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
             }
 
             if RUN_CANCELLED.load(Ordering::SeqCst) {
-                let _ = child.kill();
+                let _ = kill_process_tree(child.id());
                 break;
             }
 
             if start.elapsed() >= timeout {
                 timed_out = true;
-                let _ = child.kill();
+                let _ = kill_process_tree(child.id());
                 break;
             }
 
@@ -222,14 +227,14 @@ where
         }
 
         if RUN_CANCELLED.load(Ordering::SeqCst) {
-            let _ = child.kill();
+            let _ = kill_process_tree(child.id());
             exit_code = child.wait().ok().and_then(|status| status.code());
             break;
         }
 
         if start.elapsed() >= timeout {
             timed_out = true;
-            let _ = child.kill();
+            let _ = kill_process_tree(child.id());
             exit_code = child.wait().ok().and_then(|status| status.code());
             break;
         }

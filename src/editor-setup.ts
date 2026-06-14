@@ -87,6 +87,9 @@ export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty:
       strings: false,
     },
     suggestOnTriggerCharacters: true,
+    acceptSuggestionOnCommitCharacter: false,
+    fixedOverflowWidgets: false,
+    allowOverflow: false,
     hideCursorInOverviewRuler: true,
     overviewRulerLanes: 0,
     overviewRulerBorder: false,
@@ -275,6 +278,7 @@ export function installEditorKeybindings(view: EditorView) {
 
   view.onDidType((text) => {
     if (text === '<') completeIncludeAngleBracket(view);
+    if (text.includes(';')) hideSuggestWidget(view);
   });
 }
 
@@ -325,6 +329,10 @@ function completeIncludeAngleBracket(view: EditorView) {
     forceMoveMarkers: true,
   }]);
   view.setPosition(position);
+}
+
+function hideSuggestWidget(view: EditorView) {
+  view.trigger('33ide', 'hideSuggestWidget', undefined);
 }
 
 export function fixEditorStyles() {

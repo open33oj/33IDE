@@ -3,6 +3,15 @@ body, h1, h2, h3, p, ul, ol, button, input, textarea, select { margin: 0; }
 :root { --app-zoom: 1; }
 html, body { height: 100%; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1e1e1e; color: #cccccc; display: flex; flex-direction: column; font-size: 16px; overflow: hidden; }
+#zoom-root {
+  width: calc(100% / var(--app-zoom));
+  height: calc(100% / var(--app-zoom));
+  transform: scale(var(--app-zoom));
+  transform-origin: top left;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 /* Menu */
 #menubar { display: flex; align-items: center; padding: 0 8px; height: 38px; background: #252526; border-bottom: 1px solid #3c3c3c; flex-shrink: 0; font-size: 16px; }
@@ -25,6 +34,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 #toolbar button.danger { background: #a1262b; color: white; }
 #toolbar button.danger:hover { background: #c2353a; }
 #btn-run { min-width: 88px; }
+#btn-toggle-io { min-width: 92px; }
+#btn-toggle-io.active { background: #0e639c; color: #fff; }
 #compiler-info { color: #808080; font-size: 12px; margin: 0 8px; }
 
 /* Main */
@@ -60,6 +71,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 #editor > .monaco-editor {
   flex: 1;
@@ -128,6 +140,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 /* Resizer */
 .resizer { width: 5px; background: #3c3c3c; cursor: col-resize; flex-shrink: 0; }
 .resizer:hover { background: #007acc; }
+.resizer.hidden { display: none; }
 body.resizing { cursor: col-resize !important; user-select: none; }
 body.resizing :where(:not(.monaco-editor):not(.monaco-editor *)) { cursor: col-resize !important; user-select: none; }
 body.tab-dragging { user-select: none; }
@@ -137,16 +150,22 @@ body.selection-dragging { cursor: move !important; user-select: none; }
 body.selection-dragging :where(:not(.monaco-editor):not(.monaco-editor *)) { cursor: move !important; user-select: none; }
 
 /* Side panel */
-#side-panel { flex: 1; min-width: 280px; background: #1e1e1e; border-left: 1px solid #3c3c3c; display: flex; flex-direction: column; flex-shrink: 0; }
+#side-panel { flex: 1; min-width: 280px; background: #1e1e1e; border-left: 1px solid #3c3c3c; display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; }
 #side-panel.hidden { display: none; }
-.side-tabs { display: flex; background: #252526; border-bottom: 1px solid #3c3c3c; flex-shrink: 0; }
-.side-tab { padding: 6px 14px; cursor: pointer; font-size: 15px; color: #808080; border-bottom: 2px solid transparent; }
-.side-tab:hover { color: #cccccc; }
-.side-tab.active { color: #cccccc; border-bottom-color: #007acc; }
-.side-content { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.side-content.hidden { display: none; }
-#input-area { width: 100%; flex: 1; resize: none; background: #1e1e1e; color: #cccccc; border: none; padding: 8px 10px; font-family: 'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', monospace; font-size: 16px; outline: none; }
+#io-stack { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(140px, 1fr) 6px minmax(140px, 1fr); }
+.io-section { min-height: 0; display: flex; flex-direction: column; }
+.io-section-title { padding: 6px 12px; background: #252526; border-bottom: 1px solid #3c3c3c; font-size: 13px; color: #b8b8b8; flex-shrink: 0; }
+.io-section-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.io-resizer { background: #3c3c3c; cursor: row-resize; flex-shrink: 0; }
+.io-resizer:hover { background: #007acc; }
+#side-panel.io-resizing,
+#side-panel.io-resizing *:not(.monaco-editor):not(.monaco-editor *) { cursor: row-resize !important; user-select: none; }
+#input-area { width: 100%; flex: 1; resize: none; background: #1e1e1e; color: #cccccc; border: none; padding: 8px 10px; font-family: 'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', monospace; font-size: 16px; outline: none; overflow: auto; }
 #output-content { flex: 1; padding: 8px 10px; overflow: auto; font-family: 'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', monospace; font-size: 16px; white-space: pre-wrap; word-break: break-all; }
+#editor .monaco-editor .suggest-widget {
+  max-height: min(40vh, 320px);
+  max-width: calc(100% - 16px);
+}
 .success { color: #4ec9b0; }
 .error { color: #f44747; }
 .info { color: #808080; }
@@ -229,10 +248,9 @@ body.selection-dragging :where(:not(.monaco-editor):not(.monaco-editor *)) { cur
 .theme-light .resizer { background: #e0e0e0; }
 .theme-light .resizer:hover { background: #0078d4; }
 .theme-light #side-panel { background: #f3f3f3; border-left-color: #e0e0e0; }
-.theme-light .side-tabs { background: #f3f3f3; border-bottom-color: #e0e0e0; }
-.theme-light .side-tab { color: #666; }
-.theme-light .side-tab:hover { color: #333; }
-.theme-light .side-tab.active { color: #333; border-bottom-color: #0078d4; }
+.theme-light .io-section-title { background: #f3f3f3; border-bottom-color: #e0e0e0; color: #666; }
+.theme-light .io-resizer { background: #e0e0e0; }
+.theme-light .io-resizer:hover { background: #0078d4; }
 .theme-light #input-area { background: #fff; color: #333; }
 .theme-light #output-content { background: #fff; color: #333; }
 .theme-light .success { color: #16825d; }

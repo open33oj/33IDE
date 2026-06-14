@@ -1,6 +1,11 @@
+use std::io::Read;
 use std::process::Command;
 use std::path::PathBuf;
 use std::fs;
+use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use crate::settings::Settings;
 
@@ -11,12 +16,60 @@ pub struct CompileResult {
     pub success: bool,
     pub error: Option<String>,
     pub raw_error: Option<String>,
+    pub status: Option<String>,
+}
+
+const COMPILE_TIMEOUT_MS: u64 = 60_000;
+
+static CURRENT_COMPILE_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+static COMPILE_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+fn compile_pid_slot() -> &'static Mutex<Option<u32>> {
+    CURRENT_COMPILE_PID.get_or_init(|| Mutex::new(None))
+}
+
+fn set_current_compile_pid(pid: Option<u32>) {
+    if let Ok(mut slot) = compile_pid_slot().lock() {
+        *slot = pid;
+    }
+}
+
+fn kill_process_tree(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x00000008)
+            .output()
+            .is_ok()
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output()
+            .is_ok()
+    }
+}
+
+pub fn cancel_current_compile() -> bool {
+    let pid = compile_pid_slot().lock().ok().and_then(|slot| *slot);
+    let Some(pid) = pid else {
+        return false;
+    };
+    COMPILE_CANCELLED.store(true, Ordering::SeqCst);
+    kill_process_tree(pid)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompilerInfo {
     pub path: String,
     pub version: String,
+    #[serde(default)]
+    pub binary_size: u64,
+    #[serde(default)]
+    pub modified_ms: u128,
 }
 
 fn cache_path() -> PathBuf {
@@ -31,7 +84,15 @@ fn load_cached_compiler_info() -> Option<CompilerInfo> {
     let path = cache_path();
     let data = fs::read_to_string(&path).ok()?;
     let info: CompilerInfo = serde_json::from_str(&data).ok()?;
-    if PathBuf::from(&info.path).exists() {
+    if compiler_signature(&info.path)
+        .map(|(binary_size, modified_ms)| {
+            info.binary_size == binary_size
+                && info.modified_ms == modified_ms
+                && info.binary_size > 0
+                && info.modified_ms > 0
+        })
+        .unwrap_or(false)
+    {
         Some(info)
     } else {
         None
@@ -42,6 +103,21 @@ fn save_compiler_info_cache(info: &CompilerInfo) {
     let path = cache_path();
     if let Ok(json) = serde_json::to_string(info) {
         let _ = fs::write(&path, json);
+    }
+}
+
+fn compiler_signature(path: &str) -> Option<(u64, u128)> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let modified_ms = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis();
+    Some((metadata.len(), modified_ms))
+}
+
+fn describe_command_error(tool: &str, path: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        format!("{} not found: {}", tool, path)
+    } else {
+        format!("failed to run {} at {}: {}", tool, path, error)
     }
 }
 
@@ -56,13 +132,16 @@ pub fn get_compiler_info(settings: &Settings) -> Result<String, String> {
     let output = Command::new(&compiler)
         .arg("--version")
         .output()
-        .map_err(|e| format!("{}: {}", compiler, e))?;
+        .map_err(|e| describe_command_error("compiler", &compiler, &e))?;
     let version = String::from_utf8_lossy(&output.stdout).to_string();
     let first_line = version.lines().next().unwrap_or("unknown").to_string();
+    let (binary_size, modified_ms) = compiler_signature(&compiler).unwrap_or((0, 0));
 
     save_compiler_info_cache(&CompilerInfo {
         path: compiler,
         version: first_line.clone(),
+        binary_size,
+        modified_ms,
     });
 
     Ok(first_line)
@@ -328,7 +407,7 @@ fn find_libexec_dir(compiler_dir: &std::path::Path) -> Option<PathBuf> {
             .collect();
         // Sort so we pick the highest version if multiple exist
         versions.sort();
-        return versions.into_iter().next();
+        return versions.into_iter().next_back();
     }
 
     None
@@ -356,33 +435,150 @@ pub fn compile(src: &PathBuf, out: &PathBuf, settings: &Settings) -> CompileResu
     args.push(out.to_string_lossy().to_string());
     args.push(src.to_string_lossy().to_string());
 
-    let output = if cfg!(target_os = "windows") {
-        let mut command = Command::new(&compiler);
-        command.args(&args);
-        if let Some(path) = path_with_compiler_bin(settings) {
-            command.env("PATH", path);
-        }
-        command
-            .creation_flags(0x00000008) // CREATE_NO_WINDOW
-            .output()
-    } else {
-        let mut command = Command::new(&compiler);
-        command.args(&args);
-        if let Some(path) = path_with_compiler_bin(settings) {
-            command.env("PATH", path);
-        }
-        command.output()
-    };
+    let mut command = Command::new(&compiler);
+    command.args(&args);
+    if let Some(path) = path_with_compiler_bin(settings) {
+        command.env("PATH", path);
+    }
+
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x00000008); // CREATE_NO_WINDOW
+
+    COMPILE_CANCELLED.store(false, Ordering::SeqCst);
+
+    let output = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            set_current_compile_pid(Some(child.id()));
+
+            let (tx, rx) = mpsc::channel::<(&'static str, String)>();
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                let tx = tx.clone();
+                std::thread::spawn(move || read_stream("stdout", stdout, tx))
+            });
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                let tx = tx.clone();
+                std::thread::spawn(move || read_stream("stderr", stderr, tx))
+            });
+            drop(tx);
+
+            let start = Instant::now();
+            let timeout = Duration::from_millis(COMPILE_TIMEOUT_MS);
+            let mut timed_out = false;
+            let exit_status;
+            let mut stdout_text = String::new();
+            let mut stderr_text = String::new();
+
+            loop {
+                while let Ok((stream, text)) = rx.try_recv() {
+                    if stream == "stderr" {
+                        stderr_text.push_str(&text);
+                    } else {
+                        stdout_text.push_str(&text);
+                    }
+                }
+
+                match child.try_wait()? {
+                    Some(status) => {
+                        exit_status = status;
+                        break;
+                    }
+                    None => {}
+                }
+
+                if COMPILE_CANCELLED.load(Ordering::SeqCst) {
+                    let _ = kill_process_tree(child.id());
+                    exit_status = child.wait()?;
+                    break;
+                }
+
+                if start.elapsed() >= timeout {
+                    timed_out = true;
+                    let _ = kill_process_tree(child.id());
+                    exit_status = child.wait()?;
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            if let Some(handle) = stdout_handle {
+                let _ = handle.join();
+            }
+            if let Some(handle) = stderr_handle {
+                let _ = handle.join();
+            }
+
+            while let Ok((stream, text)) = rx.try_recv() {
+                if stream == "stderr" {
+                    stderr_text.push_str(&text);
+                } else {
+                    stdout_text.push_str(&text);
+                }
+            }
+
+            set_current_compile_pid(None);
+            Ok((exit_status, stdout_text, stderr_text, timed_out))
+        });
 
     match output {
-        Ok(o) => {
-            if o.status.success() {
-                CompileResult { success: true, error: None, raw_error: None }
+        Ok((status, _stdout, stderr, timed_out)) => {
+            let cancelled = COMPILE_CANCELLED.swap(false, Ordering::SeqCst);
+            if cancelled {
+                CompileResult {
+                    success: false,
+                    error: Some("Compilation cancelled".to_string()),
+                    raw_error: Some("Compilation cancelled".to_string()),
+                    status: Some("cancelled".to_string()),
+                }
+            } else if status.success() {
+                CompileResult { success: true, error: None, raw_error: None, status: None }
+            } else if timed_out {
+                CompileResult {
+                    success: false,
+                    error: Some("Compilation timed out".to_string()),
+                    raw_error: Some("Compilation timed out".to_string()),
+                    status: Some("timeout".to_string()),
+                }
             } else {
-                let raw = String::from_utf8_lossy(&o.stderr).to_string();
-                CompileResult { success: false, error: Some(translate_gcc_error(&raw)), raw_error: Some(raw) }
+                CompileResult {
+                    success: false,
+                    error: Some(translate_gcc_error(&stderr)),
+                    raw_error: Some(stderr),
+                    status: None,
+                }
             }
         }
-        Err(e) => CompileResult { success: false, error: Some(e.to_string()), raw_error: None },
+        Err(e) => {
+            set_current_compile_pid(None);
+            CompileResult {
+                success: false,
+                error: Some(describe_command_error("compiler", &compiler, &e)),
+                raw_error: None,
+                status: None,
+            }
+        }
+    }
+}
+
+fn read_stream<R: Read + Send + 'static>(
+    stream: &'static str,
+    mut reader: R,
+    tx: mpsc::Sender<(&'static str, String)>,
+) {
+    let mut buffer = [0u8; 1024];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                let text = String::from_utf8_lossy(&buffer[..n]).to_string();
+                if tx.send((stream, text)).is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
     }
 }

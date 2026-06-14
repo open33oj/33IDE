@@ -1,6 +1,6 @@
 export type UiLocale = 'zh-CN' | 'en-US';
 
-const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.10.2';
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || '1.0.0';
 const APP_TITLE = `33IDE Lite v${APP_VERSION}`;
 
 const messages = {
@@ -28,6 +28,7 @@ const messages = {
     'menu.settings': '设置',
     'settings.open': '打开设置',
     'toolbar.terminal': '终端运行',
+    'toolbar.io': '输入/输出',
     'toolbar.run': '运行 (F5)',
     'toolbar.running': '运行中...',
     'toolbar.stop': '停止',
@@ -38,6 +39,7 @@ const messages = {
     'output.compiling': '编译中...',
     'output.running': '运行中...',
     'output.compileError': '编译错误:\n',
+    'output.interactiveConsoleRequired': '该程序使用了 Windows 控制台 API，无法在内嵌输出面板中可靠运行。请使用“终端运行”。',
     'output.cancelled': '运行已停止',
     'output.timeout': '\n[运行超时: {time}ms]',
     'output.exitInfo': '\n[退出代码: {code}, 耗时: {time}ms]',
@@ -52,6 +54,7 @@ const messages = {
     'status.runTimeout': '运行超时',
     'status.noActiveRun': '没有正在运行的任务',
     'status.compileError': '编译错误',
+    'status.interactiveConsoleRequired': '请使用“终端运行”',
     'status.error': '错误: {error}',
     'status.noSavedFile': '当前标签还没有保存到文件',
     'status.openFailed': '打开失败: {error}',
@@ -83,6 +86,7 @@ const messages = {
     'settings.bracesAllman': '花括号单独换行（Allman）',
     'settings.defaultTemplate': '默认模板',
     'settings.cancel': '取消',
+    'settings.openRunCache': '打开运行缓存目录',
     'settings.reset': '恢复默认设置',
     'settings.save': '保存',
     'context.selectAll': '全选',
@@ -128,6 +132,7 @@ const messages = {
     'menu.settings': 'Settings',
     'settings.open': 'Open Settings',
     'toolbar.terminal': 'Run In Terminal',
+    'toolbar.io': 'Input/Output',
     'toolbar.run': 'Run (F5)',
     'toolbar.running': 'Running...',
     'toolbar.stop': 'Stop',
@@ -138,6 +143,7 @@ const messages = {
     'output.compiling': 'Compiling...',
     'output.running': 'Running...',
     'output.compileError': 'Compile Error:\n',
+    'output.interactiveConsoleRequired': 'This program uses Windows console APIs and cannot run reliably in the embedded output panel. Use "Run In Terminal" instead.',
     'output.cancelled': 'Run stopped',
     'output.timeout': '\n[Timeout: {time}ms]',
     'output.exitInfo': '\n[Exit Code: {code}, Time: {time}ms]',
@@ -152,6 +158,7 @@ const messages = {
     'status.runTimeout': 'Run timed out',
     'status.noActiveRun': 'No active run',
     'status.compileError': 'Compile error',
+    'status.interactiveConsoleRequired': 'Use "Run In Terminal"',
     'status.error': 'Error: {error}',
     'status.noSavedFile': 'Current tab has no saved file',
     'status.openFailed': 'Open failed: {error}',
@@ -183,6 +190,7 @@ const messages = {
     'settings.bracesAllman': 'Put Braces On New Line (Allman)',
     'settings.defaultTemplate': 'Default Template',
     'settings.cancel': 'Cancel',
+    'settings.openRunCache': 'Open Run Cache',
     'settings.reset': 'Reset To Defaults',
     'settings.save': 'Save',
     'context.selectAll': 'Select All',

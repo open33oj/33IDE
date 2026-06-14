@@ -1,8 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -15,11 +16,12 @@ mod runner;
 mod clangd;
 
 use settings::Settings;
-use compiler::compile;
+use compiler::{cancel_current_compile, compile};
 use runner::{cancel_current_run, run, run_streaming};
 use std::sync::Mutex;
 
 static RUN_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
+static TEMP_RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunResult {
@@ -29,6 +31,107 @@ pub struct RunResult {
     pub raw_stderr: String,
     pub exit_code: Option<i32>,
     pub time_ms: u128,
+}
+
+fn temp_runs_root() -> PathBuf {
+    std::env::temp_dir().join("33ide").join("runs")
+}
+
+fn cleanup_stale_run_dirs(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    let max_age = std::time::Duration::from_secs(24 * 60 * 60);
+
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified) else {
+            continue;
+        };
+        if age >= max_age {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+fn create_run_dir(prefix: &str) -> Result<PathBuf, String> {
+    let root = temp_runs_root();
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    cleanup_stale_run_dirs(&root);
+
+    let counter = TEMP_RUN_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let dir = root.join(format!("{}-{}-{}-{}", prefix, std::process::id(), now, counter));
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+fn remove_run_dir(dir: &Path) {
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn requires_real_console(code: &str) -> bool {
+    #[cfg(windows)]
+    {
+        let lower = code.to_ascii_lowercase();
+        let markers = [
+            "getasynckeystate(",
+            "getkeystate(",
+            "getstdhandle(std_output_handle)",
+            "getstdhandle(std_input_handle)",
+            "setconsolecursorposition(",
+            "setconsoletextattribute(",
+            "setconsolewindowinfo(",
+            "setconsolescreenbuffersize(",
+            "setconsolecursorinfo(",
+            "readconsoleinput(",
+            "writeconsoleoutput(",
+            "writeconsoleoutputcharacter(",
+            "fillconsoleoutputcharacter(",
+            "fillconsoleoutputattribute(",
+            "setconsolectrlhandler(",
+            "getconsolewindow(",
+            "peekconsoleinput(",
+            "flushconsoleinputbuffer(",
+            "setwindowlongptra(getconsolewindow()",
+            "setwindowlongptrw(getconsolewindow()",
+            "system(\"pause\")",
+            "system(\"cls\")",
+        ];
+        let has_windows_console_header = lower.contains("#include <windows.h>");
+        let has_console_api = markers.iter().any(|marker| lower.contains(marker));
+        let has_vk_key_usage = lower.contains("vk_left")
+            || lower.contains("vk_right")
+            || lower.contains("vk_up")
+            || lower.contains("vk_down")
+            || lower.contains("vk_space")
+            || lower.contains("vk_tab");
+
+        (has_windows_console_header && has_console_api) || has_vk_key_usage
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = code;
+        false
+    }
+}
+
+fn console_required_message() -> String {
+    "This program uses Windows console APIs and cannot run reliably in the embedded output panel. Use \"Run In Terminal\" instead.".to_string()
 }
 
 #[tauri::command]
@@ -67,16 +170,15 @@ pub struct RunFinishedPayload {
 #[tauri::command]
 fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, String> {
     let settings = Settings::load();
-    let tmp_dir = std::env::temp_dir().join("33ide");
-    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let src = tmp_dir.join("sol.cpp");
-    let bin = tmp_dir.join(if cfg!(windows) { "sol.exe" } else { "sol" });
+    let run_dir = create_run_dir("inline")?;
+    let src = run_dir.join("main.cpp");
+    let bin = run_dir.join(if cfg!(windows) { "main.exe" } else { "main" });
     fs::write(&src, &code).map_err(|e| e.to_string())?;
     let cr = compile(&src, &bin, &settings);
     if !cr.success {
-        let _ = fs::remove_file(&src);
+        remove_run_dir(&run_dir);
         return Ok(RunResult {
-            status: "compile_error".to_string(),
+            status: cr.status.unwrap_or_else(|| "compile_error".to_string()),
             stdout: String::new(),
             stderr: cr.error.unwrap_or_default(),
             raw_stderr: cr.raw_error.unwrap_or_default(),
@@ -84,9 +186,19 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
             time_ms: 0,
         });
     }
+    if requires_real_console(&code) {
+        remove_run_dir(&run_dir);
+        return Ok(RunResult {
+            status: "interactive_console_required".to_string(),
+            stdout: String::new(),
+            stderr: console_required_message(),
+            raw_stderr: String::new(),
+            exit_code: None,
+            time_ms: 0,
+        });
+    }
     let result = run(&bin, &input.unwrap_or_default(), &settings);
-    let _ = fs::remove_file(&src);
-    let _ = fs::remove_file(&bin);
+    remove_run_dir(&run_dir);
     Ok(RunResult {
         status: result.status,
         stdout: result.stdout,
@@ -132,21 +244,36 @@ fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>
     );
 
     let settings = Settings::load();
-    let tmp_dir = std::env::temp_dir().join("33ide");
-    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let src = tmp_dir.join("sol.cpp");
-    let bin = tmp_dir.join(if cfg!(windows) { "sol.exe" } else { "sol" });
+    let run_dir = create_run_dir("stream")?;
+    let src = run_dir.join("main.cpp");
+    let bin = run_dir.join(if cfg!(windows) { "main.exe" } else { "main" });
     fs::write(&src, &code).map_err(|e| e.to_string())?;
 
     let cr = compile(&src, &bin, &settings);
     if !cr.success {
-        let _ = fs::remove_file(&src);
+        remove_run_dir(&run_dir);
+        let status = cr.status.unwrap_or_else(|| "compile_error".to_string());
         let _ = app.emit(
             "run-finished",
             RunFinishedPayload {
-                status: "compile_error".to_string(),
+                status,
                 stderr: cr.error.unwrap_or_default(),
                 raw_stderr: cr.raw_error.unwrap_or_default(),
+                exit_code: None,
+                time_ms: 0,
+            },
+        );
+        return Ok(());
+    }
+
+    if requires_real_console(&code) {
+        remove_run_dir(&run_dir);
+        let _ = app.emit(
+            "run-finished",
+            RunFinishedPayload {
+                status: "interactive_console_required".to_string(),
+                stderr: console_required_message(),
+                raw_stderr: String::new(),
                 exit_code: None,
                 time_ms: 0,
             },
@@ -171,8 +298,7 @@ fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>
         );
     });
 
-    let _ = fs::remove_file(&src);
-    let _ = fs::remove_file(&bin);
+    remove_run_dir(&run_dir);
 
     let _ = app.emit(
         "run-finished",
@@ -190,20 +316,19 @@ fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>
 
 #[tauri::command]
 fn cancel_run() -> Result<bool, String> {
-    Ok(cancel_current_run())
+    Ok(cancel_current_compile() || cancel_current_run())
 }
 
 #[tauri::command]
 fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
     let settings = Settings::load();
-    let tmp_dir = std::env::temp_dir().join("33ide");
-    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let src = tmp_dir.join("term.cpp");
-    let bin = tmp_dir.join(if cfg!(windows) { "term.exe" } else { "term" });
+    let run_dir = create_run_dir("terminal")?;
+    let src = run_dir.join("main.cpp");
+    let bin = run_dir.join(if cfg!(windows) { "main.exe" } else { "main" });
     fs::write(&src, &code).map_err(|e| e.to_string())?;
     let cr = compile(&src, &bin, &settings);
-    let _ = fs::remove_file(&src);
     if !cr.success {
+        remove_run_dir(&run_dir);
         return Ok(serde_json::json!({
             "ok": false,
             "error": cr.error.unwrap_or_default(),
@@ -211,18 +336,18 @@ fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
         }));
     }
     if cfg!(windows) {
-        let bat = tmp_dir.join("run.bat");
+        let bat = run_dir.join("run.bat");
         let path_line = compiler::compiler_bin_dir(&settings)
             .map(|dir| format!("set \"PATH={};%PATH%\"\r\n", dir.display()))
             .unwrap_or_default();
         fs::write(&bat, format!(
             "@echo off\r\nchcp 65001 >nul\r\nset LANG=zh_CN.UTF-8\r\nset LC_ALL=zh_CN.UTF-8\r\n{}cd /d \"{}\"\r\n\"{}\"\r\necho.\r\npause\r\n",
             path_line,
-            bin.parent().unwrap_or(&tmp_dir).display(),
+            bin.parent().unwrap_or(&run_dir).display(),
             bin.display()
         )).map_err(|e| e.to_string())?;
         let mut command = Command::new("cmd.exe");
-        command.args(&["/c", "start", "", "cmd.exe", "/d", "/c", &bat.to_string_lossy()]);
+        command.args(["/c", "start", "", "cmd.exe", "/d", "/k", &bat.to_string_lossy()]);
         if let Some(path) = compiler::path_with_compiler_bin(&settings) {
             command.env("PATH", path);
         }
@@ -276,6 +401,36 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_run_cache_dir() -> Result<(), String> {
+    let dir = temp_runs_root();
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_settings() -> Result<Settings, String> {
     Ok(Settings::load())
 }
@@ -308,7 +463,7 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
 
     let cf_path = match cf_candidates.iter().find(|p| p.exists()) {
         Some(p) => p.clone(),
-        None => return Ok(code),
+        None => return Err("clang-format not found. Please make sure tools/clang-format.exe is packaged correctly.".to_string()),
     };
 
     let tab_size = settings.editor_tab_size.max(1);
@@ -340,7 +495,15 @@ fn format_code(code: String, _tab_size: u32) -> Result<String, String> {
 
     match output {
         Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).to_string()),
-        _ => Ok(code),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+            Err(if stderr.is_empty() {
+                format!("clang-format exited with status {}", o.status)
+            } else {
+                stderr
+            })
+        }
+        Err(e) => Err(format!("failed to run clang-format at {}: {}", cf_path.display(), e)),
     }
 }
 
@@ -408,6 +571,7 @@ fn main() {
             start_compile_and_run,
             cancel_run,
             run_in_terminal,
+            open_run_cache_dir,
             read_file,
             write_file,
             reveal_in_explorer,

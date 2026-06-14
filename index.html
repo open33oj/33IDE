@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>33IDE Lite v0.10.2</title>
+  <title>33IDE Lite v1.0.0</title>
   <style>
     body{background:#1e1e1e;margin:0;overflow:hidden;height:100%}
     #loading-overlay{position:fixed;inset:0;z-index:9999;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
@@ -45,6 +45,7 @@
       </div>
     </div>
     <div id="toolbar">
+      <button id="btn-toggle-io" type="button" title="显示或隐藏输入输出面板">I/O</button>
       <button id="btn-terminal" data-i18n="toolbar.terminal">终端运行</button>
       <button id="btn-run" class="primary" data-i18n="toolbar.run">运行 (F5)</button>
     </div>
@@ -57,15 +58,20 @@
     </div>
     <div id="resizer" class="resizer"></div>
     <div id="side-panel">
-      <div class="side-tabs">
-        <div class="side-tab active" data-panel="input" data-i18n="sidebar.input">输入</div>
-        <div class="side-tab" data-panel="output" data-i18n="sidebar.output">输出</div>
-      </div>
-      <div id="side-content-input" class="side-content">
-        <textarea id="input-area" data-i18n-placeholder="placeholder.stdin" placeholder="在此输入程序的 stdin 数据..."></textarea>
-      </div>
-      <div id="side-content-output" class="side-content hidden">
-        <div id="output-content" data-i18n="output.idle">点击“运行”或按 F5 编译运行代码</div>
+      <div id="io-stack">
+        <section id="io-input-section" class="io-section">
+          <div class="io-section-title" data-i18n="sidebar.input">输入</div>
+          <div class="io-section-body">
+            <textarea id="input-area" data-i18n-placeholder="placeholder.stdin" placeholder="在此输入程序的 stdin 数据..."></textarea>
+          </div>
+        </section>
+        <div id="io-resizer" class="io-resizer" aria-hidden="true"></div>
+        <section id="io-output-section" class="io-section">
+          <div class="io-section-title" data-i18n="sidebar.output">输出</div>
+          <div class="io-section-body">
+            <div id="output-content" data-i18n="output.idle">点击“运行”或按 F5 编译运行代码</div>
+          </div>
+        </section>
       </div>
     </div>
   </div>

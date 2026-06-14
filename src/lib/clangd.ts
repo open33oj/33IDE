@@ -81,12 +81,22 @@ export function initClangdFeatures(filePathProvider: () => string | undefined) {
 }
 
 function toCompletionItem(item: ClangdCompletionItem, range: monaco.IRange): monaco.languages.CompletionItem {
+  const completionRange = item.text_edit
+    ? new monaco.Range(
+        item.text_edit.start_line + 1,
+        item.text_edit.start_character + 1,
+        item.text_edit.end_line + 1,
+        item.text_edit.end_character + 1,
+      )
+    : range;
+
   return {
     label: item.label,
     kind: toCompletionKind(item.kind),
     detail: item.detail,
-    insertText: sanitizeInsertText(item.insert_text || item.label),
-    range,
+    insertText: sanitizeInsertText(item.text_edit?.new_text || item.insert_text || item.label),
+    filterText: item.label,
+    range: completionRange,
   };
 }
 

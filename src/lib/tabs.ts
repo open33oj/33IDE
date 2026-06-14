@@ -285,7 +285,16 @@ export function renderTabs() {
     const el = document.createElement('div');
     el.className = 'editor-tab' + (tab.id === activeTab?.id ? ' active' : '');
     el.setAttribute('data-tab-id', tab.id);
-    el.innerHTML = `<span class="tab-label">${tab.name}${tab.dirty ? ' *' : ''}${tab.externalModified ? ' !' : ''}</span><span class="tab-close">&times;</span>`;
+
+    const label = document.createElement('span');
+    label.className = 'tab-label';
+    label.textContent = `${tab.name}${tab.dirty ? ' *' : ''}${tab.externalModified ? ' !' : ''}`;
+
+    const close = document.createElement('span');
+    close.className = 'tab-close';
+    close.textContent = '\u00d7';
+
+    el.append(label, close);
 
     el.addEventListener('click', () => {
       if (suppressNextClickTabId === tab.id) {
@@ -294,7 +303,7 @@ export function renderTabs() {
       }
       switchTo(tab);
     });
-    el.querySelector('.tab-close')!.addEventListener('click', (event) => {
+    close.addEventListener('click', (event) => {
       event.stopPropagation();
       closeTab(tab.id);
     });

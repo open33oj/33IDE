@@ -7,11 +7,11 @@ import { api, AppConfig } from './lib/api';
 import { initContextMenuDismiss } from './lib/context-menu';
 import { applyFont, applyTabSize, fixEditorStyles, forceLayout, lockGutterWidths, setDefaultTabSize, switchTheme } from './editor-setup';
 import { initClangdFeatures } from './lib/clangd';
-import { initAutoSave, initExternalFileMonitor, newFile, openFile, promptReloadIfNeeded, revealActiveFileFolder, saveFile, saveFileAs, saveTab } from './lib/files';
+import { initAutoSave, initExternalFileMonitor, newFile, openFile, promptReloadIfNeeded, revealActiveFileFolder, saveFile, saveFileAs, saveTab, saveTabAs } from './lib/files';
 import { applyI18n, t } from './lib/i18n';
 import { runCode, runInTerminal, formatCurrentCode } from './lib/runner';
 import { closeTab, createTab, getActiveTab, getTabs, getView, initView, shouldPromptSave, switchTo } from './lib/tabs';
-import { applyZoom, initEditorContextMenu, initResizer, initSettingsDialog, initSidebar, initTabContextMenu, initThemeMenu, setStatus } from './lib/ui';
+import { applyZoom, initEditorContextMenu, initResizer, initSettingsDialog, initSidebar, initTabContextMenu, initThemeMenu, initZoomLayout, setStatus } from './lib/ui';
 
 const DEFAULT_CONFIG: AppConfig = {
   compiler_path: '',
@@ -65,6 +65,7 @@ async function init() {
   }
   applyI18n(config.ui_language);
   initClangdFeatures(() => getActiveTab()?.path || undefined);
+  initZoomLayout(config.editor_zoom || 100);
 
   const defaultTemplate = config.default_template || tpl || DEFAULT_CONFIG.default_template;
   setDefaultTabSize(config.editor_tab_size || 4);
@@ -195,7 +196,7 @@ async function init() {
   initAutoSave(config);
   initContextMenuDismiss();
   initEditorContextMenu(formatCurrentCode);
-  initTabContextMenu();
+  initTabContextMenu(saveTab, saveTabAs);
   initCloseGuard();
   document.getElementById('editor-tabs')!.addEventListener('click', () => {
     void promptReloadIfNeeded(getActiveTab());

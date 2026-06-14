@@ -1,5 +1,4 @@
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
   applyFont,
   forceLayout,
@@ -13,21 +12,72 @@ import {
 import { api, AppConfig } from './api';
 import { showContextMenu, MenuItem } from './context-menu';
 import { t } from './i18n';
-import { closeTab, getActiveTab, getTabs, getView, switchTo } from './tabs';
+import { closeTab, getActiveTab, getTabs, getView, switchTo, type Tab } from './tabs';
 
 const MIN_EDITOR_PANEL_WIDTH = 200;
 const MIN_SIDE_PANEL_WIDTH = 280;
+const MIN_IO_SECTION_HEIGHT = 140;
+const IO_RESIZER_HEIGHT = 6;
+const ZOOM_ROOT_ID = 'zoom-root';
+let ioPanelVisible = true;
+let ioSplitRatio = 0.5;
+
+function getUiScale() {
+  const scale = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--app-zoom'),
+  );
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function toContentPixels(visualPixels: number) {
+  return visualPixels / getUiScale();
+}
+
+function ensureZoomRoot() {
+  let root = document.getElementById(ZOOM_ROOT_ID) as HTMLElement | null;
+  if (root) return root;
+
+  root = document.createElement('div');
+  root.id = ZOOM_ROOT_ID;
+
+  const body = document.body;
+  const children = Array.from(body.childNodes).filter((node) => {
+    return !(node instanceof HTMLScriptElement) && node !== root;
+  });
+
+  const firstScript = Array.from(body.children).find((element) => element.tagName === 'SCRIPT');
+  if (firstScript) {
+    body.insertBefore(root, firstScript);
+  } else {
+    body.appendChild(root);
+  }
+
+  for (const child of children) {
+    root.appendChild(child);
+  }
+
+  return root;
+}
+
+export function initZoomLayout(percent: number) {
+  ensureZoomRoot();
+  const scale = Math.max(0.5, Math.min(2, (percent || 100) / 100));
+  document.documentElement.style.setProperty('--app-zoom', scale.toString());
+}
 
 function clampEditorPanelWidth(requestedWidth?: number) {
   const editorPanel = document.getElementById('editor-panel') as HTMLElement | null;
   if (!editorPanel) return;
 
+  const scale = getUiScale();
+  const minEditorWidth = MIN_EDITOR_PANEL_WIDTH / scale;
+  const minSidePanelWidth = MIN_SIDE_PANEL_WIDTH / scale;
   const maxWidth = Math.max(
-    MIN_EDITOR_PANEL_WIDTH,
-    window.innerWidth - MIN_SIDE_PANEL_WIDTH,
+    minEditorWidth,
+    window.innerWidth / scale - minSidePanelWidth,
   );
-  const currentWidth = requestedWidth ?? editorPanel.getBoundingClientRect().width;
-  const clampedWidth = Math.max(MIN_EDITOR_PANEL_WIDTH, Math.min(currentWidth, maxWidth));
+  const currentWidth = requestedWidth ?? toContentPixels(editorPanel.getBoundingClientRect().width);
+  const clampedWidth = Math.max(minEditorWidth, Math.min(currentWidth, maxWidth));
 
   editorPanel.style.flex = 'none';
   editorPanel.style.width = `${clampedWidth}px`;
@@ -99,6 +149,7 @@ export function initSettingsDialog(
 ) {
   const overlay = document.getElementById('settings-overlay')!;
   const themeSelect = document.getElementById('settings-theme') as HTMLSelectElement;
+  ensureOpenRunCacheButton();
   if (!themeSelect.dataset.bound) {
     themeSelect.innerHTML = themes.map((theme) => `<option value="${theme.id}">${theme.name}</option>`).join('');
     themeSelect.dataset.bound = 'true';
@@ -152,6 +203,13 @@ export function initSettingsDialog(
     document.getElementById('settings-reset')!.addEventListener('click', () => {
       syncForm(defaultConfig);
     });
+    document.getElementById('settings-open-run-cache')!.addEventListener('click', async () => {
+      try {
+        await api.openRunCacheDir();
+      } catch (e) {
+        setStatus(t('status.error', { error: String(e) }), 'error');
+      }
+    });
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) close();
     });
@@ -177,21 +235,46 @@ export function initSettingsDialog(
   }
 }
 
+function ensureOpenRunCacheButton() {
+  if (document.getElementById('settings-open-run-cache')) return;
+
+  const resetButton = document.getElementById('settings-reset');
+  if (!resetButton) return;
+
+  const leftActions =
+    resetButton.parentElement?.classList.contains('settings-footer-actions')
+      ? resetButton.parentElement
+      : (() => {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'settings-footer-actions';
+          resetButton.parentElement?.insertBefore(wrapper, resetButton);
+          wrapper.appendChild(resetButton);
+          return wrapper;
+        })();
+
+  const button = document.createElement('button');
+  button.id = 'settings-open-run-cache';
+  button.type = 'button';
+  button.dataset.i18n = 'settings.openRunCache';
+  button.textContent = t('settings.openRunCache');
+  leftActions?.appendChild(button);
+}
+
 export function applyZoom(percent: number) {
-  const scale = Math.max(0.5, Math.min(2, (percent || 100) / 100));
-  document.body.style.zoom = '';
-  document.documentElement.style.setProperty('--app-zoom', scale.toString());
-  void getCurrentWebviewWindow()
-    .setZoom(scale)
-    .catch(() => {
-      document.documentElement.style.setProperty('--app-zoom', '1');
-    })
-    .finally(() => {
-      requestAnimationFrame(() => {
-        clampEditorPanelWidth();
-        forceLayout(getView());
-      });
-    });
+  initZoomLayout(percent);
+  const relayout = () => {
+    try {
+      getView().trigger('33ide', 'hideSuggestWidget', undefined);
+    } catch {}
+    clampEditorPanelWidth();
+    applyIoSplit();
+    forceLayout(getView());
+  };
+  requestAnimationFrame(() => {
+    relayout();
+    window.setTimeout(relayout, 0);
+    window.setTimeout(relayout, 80);
+  });
 }
 
 export function setStatus(text: string, type?: string) {
@@ -212,21 +295,27 @@ export function appendOutput(text: string, className?: string) {
 }
 
 export function switchToOutput() {
-  document.querySelectorAll('.side-tab').forEach((tab) => tab.classList.remove('active'));
-  document.querySelectorAll('.side-content').forEach((content) => content.classList.add('hidden'));
-  document.querySelector('.side-tab[data-panel="output"]')!.classList.add('active');
-  document.getElementById('side-content-output')!.classList.remove('hidden');
+  const output = document.getElementById('output-content');
+  if (!output) return;
+  if (!ioPanelVisible) {
+    toggleIoPanel(true);
+  }
+  output.scrollTop = output.scrollHeight;
 }
 
 export function initSidebar() {
-  document.querySelectorAll('.side-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.side-tab').forEach((item) => item.classList.remove('active'));
-      document.querySelectorAll('.side-content').forEach((content) => content.classList.add('hidden'));
-      tab.classList.add('active');
-      document.getElementById(`side-content-${(tab as HTMLElement).dataset.panel}`)!.classList.remove('hidden');
+  const toggleButton = document.getElementById('btn-toggle-io') as HTMLButtonElement | null;
+  if (toggleButton) {
+    toggleButton.textContent = t('toolbar.io');
+  }
+  if (toggleButton && !toggleButton.dataset.bound) {
+    toggleButton.addEventListener('click', () => {
+      toggleIoPanel(!ioPanelVisible);
     });
-  });
+    toggleButton.dataset.bound = 'true';
+  }
+  bindIoResizer();
+  syncIoToggleButton();
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === 'a') {
@@ -249,8 +338,8 @@ export function initResizer() {
   });
 
   document.addEventListener('mousemove', (e) => {
-    if (!on) return;
-    clampEditorPanelWidth(e.clientX);
+    if (!on || !ioPanelVisible) return;
+    clampEditorPanelWidth(toContentPixels(e.clientX));
   });
 
   document.addEventListener('mouseup', () => {
@@ -261,6 +350,113 @@ export function initResizer() {
 
   window.addEventListener('resize', () => clampEditorPanelWidth());
   requestAnimationFrame(() => clampEditorPanelWidth());
+}
+
+export function toggleIoPanel(visible?: boolean) {
+  const sidePanel = document.getElementById('side-panel');
+  const resizer = document.getElementById('resizer');
+  const editorPanel = document.getElementById('editor-panel');
+  if (!sidePanel || !resizer || !editorPanel) return;
+
+  ioPanelVisible = visible ?? !ioPanelVisible;
+  sidePanel.classList.toggle('hidden', !ioPanelVisible);
+  resizer.classList.toggle('hidden', !ioPanelVisible);
+
+  if (ioPanelVisible) {
+    editorPanel.style.flex = 'none';
+    clampEditorPanelWidth();
+  } else {
+    editorPanel.style.width = '';
+    editorPanel.style.flex = '1 1 auto';
+  }
+
+  syncIoToggleButton();
+  requestAnimationFrame(() => {
+    if (ioPanelVisible) {
+      applyIoSplit();
+    }
+    forceLayout(getView());
+  });
+}
+
+function syncIoToggleButton() {
+  const toggleButton = document.getElementById('btn-toggle-io') as HTMLButtonElement | null;
+  if (!toggleButton) return;
+  toggleButton.textContent = t('toolbar.io');
+  toggleButton.classList.toggle('active', ioPanelVisible);
+  toggleButton.title = ioPanelVisible ? '隐藏输入输出面板' : '显示输入输出面板';
+}
+
+function bindIoResizer() {
+  const stack = document.getElementById('io-stack') as HTMLElement | null;
+  const resizer = document.getElementById('io-resizer') as HTMLElement | null;
+  const sidePanel = document.getElementById('side-panel') as HTMLElement | null;
+  if (!stack || !resizer || !sidePanel || resizer.dataset.bound) return;
+
+  let dragging = false;
+
+  const stopDragging = () => {
+    if (!dragging) return;
+    dragging = false;
+    sidePanel.classList.remove('io-resizing');
+  };
+
+  const onMouseMove = (event: MouseEvent) => {
+    if (!dragging || !ioPanelVisible) return;
+    const rect = stack.getBoundingClientRect();
+    const scale = getUiScale();
+    const availableHeight = Math.max(0, stack.clientHeight - IO_RESIZER_HEIGHT);
+    if (availableHeight <= 0) return;
+
+    const minimum = getEffectiveIoMinHeight(availableHeight);
+    const topHeight = Math.max(
+      minimum,
+      Math.min((event.clientY - rect.top) / scale, availableHeight - minimum),
+    );
+
+    ioSplitRatio = topHeight / availableHeight;
+    applyIoSplit();
+  };
+
+  resizer.addEventListener('mousedown', (event) => {
+    if (!ioPanelVisible) return;
+    event.preventDefault();
+    dragging = true;
+    sidePanel.classList.add('io-resizing');
+  });
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', stopDragging);
+  window.addEventListener('resize', () => {
+    if (ioPanelVisible) {
+      applyIoSplit();
+    }
+  });
+
+  resizer.dataset.bound = 'true';
+  requestAnimationFrame(() => applyIoSplit());
+}
+
+function applyIoSplit() {
+  const stack = document.getElementById('io-stack') as HTMLElement | null;
+  if (!stack || !ioPanelVisible) return;
+
+  const availableHeight = Math.max(0, stack.clientHeight - IO_RESIZER_HEIGHT);
+  if (availableHeight <= 0) return;
+
+  const minimum = getEffectiveIoMinHeight(availableHeight);
+  const minRatio = minimum / availableHeight;
+  ioSplitRatio = Math.max(minRatio, Math.min(ioSplitRatio, 1 - minRatio));
+
+  const topHeight = Math.round(availableHeight * ioSplitRatio);
+  const bottomHeight = Math.max(minimum, availableHeight - topHeight);
+  const finalTopHeight = Math.max(minimum, availableHeight - bottomHeight);
+  stack.style.gridTemplateRows = `${finalTopHeight}px ${IO_RESIZER_HEIGHT}px ${bottomHeight}px`;
+}
+
+function getEffectiveIoMinHeight(availableHeight: number) {
+  if (availableHeight <= 0) return 0;
+  return Math.min(MIN_IO_SECTION_HEIGHT, Math.max(48, Math.floor(availableHeight / 2)));
 }
 
 export function initEditorContextMenu(onFormat: () => void) {
@@ -336,7 +532,10 @@ export function initEditorContextMenu(onFormat: () => void) {
   });
 }
 
-export function initTabContextMenu() {
+export function initTabContextMenu(
+  onSaveTab: (tab: Tab) => Promise<boolean> | boolean,
+  onSaveTabAs: (tab: Tab) => Promise<boolean> | boolean,
+) {
   document.getElementById('editor-tabs')!.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -350,11 +549,24 @@ export function initTabContextMenu() {
     if (!tab) return;
 
     showContextMenu([
-      { label: t('context.save'), shortcut: 'Ctrl+S', action: () => { if (getActiveTab() !== tab) switchTo(tab); } },
-      { label: t('context.saveAs'), action: () => { if (getActiveTab() !== tab) switchTo(tab); } },
+      {
+        label: t('context.save'),
+        shortcut: 'Ctrl+S',
+        action: () => {
+          if (getActiveTab() !== tab) switchTo(tab);
+          void onSaveTab(tab);
+        },
+      },
+      {
+        label: t('context.saveAs'),
+        action: () => {
+          if (getActiveTab() !== tab) switchTo(tab);
+          void onSaveTabAs(tab);
+        },
+      },
       { label: '---', action: () => {} },
       { label: t('context.close'), shortcut: 'Ctrl+W', action: () => closeTab(tab.id) },
-      { label: t('context.closeOthers'), action: () => { tabs.filter((item) => item.id !== tab.id).forEach((item) => closeTab(item.id)); } },
+      { label: t('context.closeOthers'), action: () => { [...tabs].filter((item) => item.id !== tab.id).forEach((item) => closeTab(item.id)); } },
     ], e.clientX, e.clientY);
   });
 }

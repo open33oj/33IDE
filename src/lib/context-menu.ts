@@ -20,7 +20,15 @@ export function showContextMenu(items: MenuItem[], x: number, y: number) {
     }
     const el = document.createElement('div');
     el.className = 'context-menu-item';
-    el.innerHTML = `<span>${item.label}</span>${item.shortcut ? `<span class="shortcut">${item.shortcut}</span>` : ''}`;
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    el.appendChild(label);
+    if (item.shortcut) {
+      const shortcut = document.createElement('span');
+      shortcut.className = 'shortcut';
+      shortcut.textContent = item.shortcut;
+      el.appendChild(shortcut);
+    }
     el.addEventListener('click', () => { hideContextMenu(); item.action(); });
     menu.appendChild(el);
   });
