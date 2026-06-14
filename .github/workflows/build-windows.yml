@@ -12,8 +12,30 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    name: Build Windows NSIS installer
+  check:
+    name: Check frontend build
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+  release-windows:
+    name: Build and publish Windows installer
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
 
     steps:
