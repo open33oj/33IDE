@@ -1,6 +1,7 @@
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline';
 import { conf as cppConf, language as cppLanguage } from 'monaco-editor/esm/vs/basic-languages/cpp/cpp';
+import { SuggestWidget } from 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestWidget';
 import { defineMonacoThemes, getTheme, themes } from './lib/themes';
 
 (self as any).MonacoEnvironment = {
@@ -15,6 +16,8 @@ export type EditorSelection = monaco.Selection;
 export type EditorViewState = monaco.editor.ICodeEditorViewState;
 
 const DEFAULT_FONT = "'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', 'NSimSun', monospace";
+const SUGGEST_LINE_HEIGHT_RATIO = 1.45;
+const SUGGEST_VISIBLE_ITEMS = 3;
 
 let currentThemeId = 'oneDark';
 let currentTabSize = 4;
@@ -22,6 +25,7 @@ let currentFontSize = 16;
 let currentFontFamily = DEFAULT_FONT;
 let monacoBootstrapped = false;
 let cppLanguageRegistered = false;
+let suggestWidgetPatched = false;
 const layoutObservers = new WeakMap<EditorView, ResizeObserver>();
 const TOKEN_STYLE_ID = '33ide-monaco-token-colors';
 
@@ -33,6 +37,7 @@ export interface EditorTabState {
 export function bootstrapMonaco() {
   if (monacoBootstrapped) return;
   monacoBootstrapped = true;
+  patchSuggestWidgetLayout();
   registerCppLanguage();
   defineMonacoThemes(monaco);
   warmCppTokenizer();
@@ -88,6 +93,7 @@ export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty:
     },
     suggestOnTriggerCharacters: true,
     acceptSuggestionOnCommitCharacter: false,
+    suggestLineHeight: getSuggestLineHeight(),
     fixedOverflowWidgets: false,
     allowOverflow: false,
     hideCursorInOverviewRuler: true,
@@ -214,6 +220,7 @@ export function applyFont(view: EditorView, fontSize: number, fontFamily?: strin
     fontSize: currentFontSize,
     fontFamily: currentFontFamily,
     lineHeight: Math.round(currentFontSize * 1.4),
+    suggestLineHeight: getSuggestLineHeight(),
   });
   forceLayout(view);
 }
@@ -395,6 +402,22 @@ function syncScopedTokenColors() {
   if (style.textContent !== scopedRules) {
     style.textContent = scopedRules;
   }
+}
+
+function getSuggestLineHeight() {
+  return Math.round(currentFontSize * SUGGEST_LINE_HEIGHT_RATIO);
+}
+
+function patchSuggestWidgetLayout() {
+  if (suggestWidgetPatched) return;
+  suggestWidgetPatched = true;
+
+  const original = SuggestWidget.prototype.getLayoutInfo;
+  SuggestWidget.prototype.getLayoutInfo = function patchedGetLayoutInfo() {
+    const info = original.call(this);
+    info.defaultSize = info.defaultSize.with(undefined, info.statusBarHeight + SUGGEST_VISIBLE_ITEMS * info.itemHeight + info.borderHeight);
+    return info;
+  };
 }
 
 export { monaco, themes };

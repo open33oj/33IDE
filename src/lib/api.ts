@@ -51,10 +51,13 @@ export const api = {
   readTemplate: () => invoke<string>('read_template'),
   getDefaultCompilerPath: () => invoke<string>('get_default_compiler_path'),
   getCompilerInfo: () => invoke<string>('get_compiler_info'),
-  compileAndRun: (code: string, input?: string) => invoke<RunResult>('compile_and_run', { code, input }),
-  startCompileAndRun: (code: string, input?: string) => invoke<void>('start_compile_and_run', { code, input }),
+  compileAndRun: (code: string, input?: string, filePath?: string) =>
+    invoke<RunResult>('compile_and_run', { code, input, filePath }),
+  startCompileAndRun: (code: string, input?: string, filePath?: string) =>
+    invoke<void>('start_compile_and_run', { code, input, filePath }),
   cancelRun: () => invoke<boolean>('cancel_run'),
-  runInTerminal: (code: string) => invoke<{ ok: boolean; error?: string; raw_error?: string }>('run_in_terminal', { code }),
+  runInTerminal: (code: string, filePath?: string) =>
+    invoke<{ ok: boolean; error?: string; raw_error?: string }>('run_in_terminal', { code, filePath }),
   openRunCacheDir: () => invoke<void>('open_run_cache_dir'),
   readFile: (path: string) => invoke<string>('read_file', { path }),
   writeFile: (path: string, content: string) => invoke<void>('write_file', { path, content }),

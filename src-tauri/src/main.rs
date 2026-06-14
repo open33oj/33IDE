@@ -17,7 +17,7 @@ mod clangd;
 
 use settings::Settings;
 use compiler::{cancel_current_compile, compile};
-use runner::{cancel_current_run, run, run_streaming};
+use runner::{cancel_current_run, resolve_working_dir, run, run_streaming};
 use std::sync::Mutex;
 
 static RUN_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -168,7 +168,7 @@ pub struct RunFinishedPayload {
 }
 
 #[tauri::command]
-fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, String> {
+fn compile_and_run(code: String, input: Option<String>, file_path: Option<String>) -> Result<RunResult, String> {
     let settings = Settings::load();
     let run_dir = create_run_dir("inline")?;
     let src = run_dir.join("main.cpp");
@@ -197,7 +197,8 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
             time_ms: 0,
         });
     }
-    let result = run(&bin, &input.unwrap_or_default(), &settings);
+    let working_dir = resolve_working_dir(&run_dir, file_path.as_deref());
+    let result = run(&bin, &input.unwrap_or_default(), &settings, &working_dir);
     remove_run_dir(&run_dir);
     Ok(RunResult {
         status: result.status,
@@ -210,13 +211,13 @@ fn compile_and_run(code: String, input: Option<String>) -> Result<RunResult, Str
 }
 
 #[tauri::command]
-fn start_compile_and_run(app: AppHandle, code: String, input: Option<String>) -> Result<(), String> {
+fn start_compile_and_run(app: AppHandle, code: String, input: Option<String>, file_path: Option<String>) -> Result<(), String> {
     if RUN_TASK_ACTIVE.swap(true, Ordering::SeqCst) {
         return Err("A run task is already active".to_string());
     }
 
     std::thread::spawn(move || {
-        let result = compile_and_run_streaming(app.clone(), code, input);
+        let result = compile_and_run_streaming(app.clone(), code, input, file_path);
         if let Err(error) = result {
             let _ = app.emit(
                 "run-finished",
@@ -235,7 +236,7 @@ fn start_compile_and_run(app: AppHandle, code: String, input: Option<String>) ->
     Ok(())
 }
 
-fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>) -> Result<(), String> {
+fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>, file_path: Option<String>) -> Result<(), String> {
     let _ = app.emit(
         "run-phase",
         RunPhasePayload {
@@ -288,7 +289,8 @@ fn compile_and_run_streaming(app: AppHandle, code: String, input: Option<String>
         },
     );
 
-    let result = run_streaming(&bin, &input.unwrap_or_default(), &settings, |stream, text| {
+    let working_dir = resolve_working_dir(&run_dir, file_path.as_deref());
+    let result = run_streaming(&bin, &input.unwrap_or_default(), &settings, &working_dir, |stream, text| {
         let _ = app.emit(
             "run-output",
             RunOutputPayload {
@@ -320,7 +322,7 @@ fn cancel_run() -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
+fn run_in_terminal(code: String, file_path: Option<String>) -> Result<serde_json::Value, String> {
     let settings = Settings::load();
     let run_dir = create_run_dir("terminal")?;
     let src = run_dir.join("main.cpp");
@@ -337,13 +339,14 @@ fn run_in_terminal(code: String) -> Result<serde_json::Value, String> {
     }
     if cfg!(windows) {
         let bat = run_dir.join("run.bat");
+        let working_dir = resolve_working_dir(&run_dir, file_path.as_deref());
         let path_line = compiler::compiler_bin_dir(&settings)
             .map(|dir| format!("set \"PATH={};%PATH%\"\r\n", dir.display()))
             .unwrap_or_default();
         fs::write(&bat, format!(
             "@echo off\r\nchcp 65001 >nul\r\nset LANG=zh_CN.UTF-8\r\nset LC_ALL=zh_CN.UTF-8\r\n{}cd /d \"{}\"\r\n\"{}\"\r\necho.\r\npause\r\n",
             path_line,
-            bin.parent().unwrap_or(&run_dir).display(),
+            working_dir.display(),
             bin.display()
         )).map_err(|e| e.to_string())?;
         let mut command = Command::new("cmd.exe");

@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::process::Command;
 use std::sync::mpsc;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -60,14 +60,22 @@ pub fn cancel_current_run() -> bool {
     kill_process_tree(pid)
 }
 
-pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
+pub fn resolve_working_dir(run_dir: &Path, file_path: Option<&str>) -> PathBuf {
+    file_path
+        .and_then(|path| Path::new(path).parent().map(Path::to_path_buf))
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| run_dir.to_path_buf())
+}
+
+pub fn run(bin: &PathBuf, input: &str, settings: &Settings, working_dir: &Path) -> RunResult {
     let mut cmd = Command::new(bin);
     if let Some(path) = path_with_compiler_bin(settings) {
         cmd.env("PATH", path);
     }
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        .current_dir(working_dir);
 
     #[cfg(windows)]
     cmd.creation_flags(0x00000008); // CREATE_NO_WINDOW
@@ -142,7 +150,7 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings) -> RunResult {
     }
 }
 
-pub fn run_streaming<F>(bin: &PathBuf, input: &str, settings: &Settings, mut on_output: F) -> RunResult
+pub fn run_streaming<F>(bin: &PathBuf, input: &str, settings: &Settings, working_dir: &Path, mut on_output: F) -> RunResult
 where
     F: FnMut(&str, &str),
 {
@@ -152,7 +160,8 @@ where
     }
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        .current_dir(working_dir);
 
     #[cfg(windows)]
     cmd.creation_flags(0x00000008); // CREATE_NO_WINDOW

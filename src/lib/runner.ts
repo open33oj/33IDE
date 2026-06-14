@@ -149,6 +149,7 @@ export async function runCode() {
   const view = getView();
   const code = getEditorValue(view);
   const input = (document.getElementById('input-area') as HTMLTextAreaElement).value;
+  const filePath = getActiveTab()?.path || undefined;
 
   runActive = true;
   stopRequested = false;
@@ -160,7 +161,7 @@ export async function runCode() {
     switchToOutput();
     outputWaitingForFirstChunk = false;
     showOutput(`<span class="info">${t('output.compiling')}</span>`);
-    await api.startCompileAndRun(code, input || undefined);
+    await api.startCompileAndRun(code, input || undefined, filePath);
   } catch (e: any) {
     showOutput('');
     appendOutput(t('status.error', { error: String(e) }), 'error');
@@ -279,9 +280,10 @@ function renderStreamingRunResult(result: RunFinishedEvent) {
 export async function runInTerminal() {
   const view = getView();
   const code = getEditorValue(view);
+  const filePath = getActiveTab()?.path || undefined;
   clearDiagnostics(view);
   try {
-    const result = await api.runInTerminal(code);
+    const result = await api.runInTerminal(code, filePath);
     if (!result.ok) {
       const rawError = result.raw_error || result.error || '';
       switchToOutput();
