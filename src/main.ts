@@ -11,7 +11,7 @@ import { initAutoSave, initExternalFileMonitor, newFile, openFile, promptReloadI
 import { applyI18n, t } from './lib/i18n';
 import { runCode, runInTerminal, formatCurrentCode } from './lib/runner';
 import { closeTab, createTab, getActiveTab, getTabs, getView, initView, shouldPromptSave, switchTo } from './lib/tabs';
-import { applyZoom, initEditorContextMenu, initResizer, initSettingsDialog, initSidebar, initTabContextMenu, initThemeMenu, initZoomLayout, setStatus } from './lib/ui';
+import { applyEditorTextFont, applyZoom, initEditorContextMenu, initResizer, initSettingsDialog, initSidebar, initTabContextMenu, initThemeMenu, initZoomLayout, setStatus } from './lib/ui';
 
 const DEFAULT_CONFIG: AppConfig = {
   compiler_path: '',
@@ -65,6 +65,7 @@ async function init() {
   }
   applyI18n(config.ui_language);
   initClangdFeatures(() => getActiveTab()?.path || undefined);
+  applyEditorTextFont(config.editor_font_size || 16);
   initZoomLayout(config.editor_zoom || 100);
 
   const defaultTemplate = config.default_template || tpl || DEFAULT_CONFIG.default_template;
@@ -117,6 +118,7 @@ async function init() {
     applyI18n(config.ui_language);
     initThemeMenu(config, () => { api.saveSettings(config).catch(() => {}); });
     switchTheme(getView(), config.editor_theme || 'oneDark');
+    applyEditorTextFont(config.editor_font_size || 16);
     applyFont(getView(), config.editor_font_size || 16, config.editor_font_family);
     applyZoom(config.editor_zoom || 100);
     applyTabSize(getView(), config.editor_tab_size || 4);

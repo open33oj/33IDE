@@ -19,8 +19,70 @@ const MIN_SIDE_PANEL_WIDTH = 280;
 const MIN_IO_SECTION_HEIGHT = 140;
 const IO_RESIZER_HEIGHT = 6;
 const ZOOM_ROOT_ID = 'zoom-root';
+const LAYOUT_STORAGE_KEY = '33ide.layout.v1';
+const DEFAULT_EDITOR_RATIO = 0.67;
+const SAVE_LAYOUT_DELAY_MS = 120;
 let ioPanelVisible = true;
 let ioSplitRatio = 0.5;
+let editorSplitRatio = DEFAULT_EDITOR_RATIO;
+let layoutSaveTimer: number | undefined;
+
+type PersistedLayout = {
+  ioPanelVisible?: boolean;
+  editorSplitRatio?: number;
+  ioSplitRatio?: number;
+};
+
+function readPersistedLayout(): PersistedLayout {
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PersistedLayout;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function applyPersistedLayout() {
+  const layout = readPersistedLayout();
+  if (typeof layout.ioPanelVisible === 'boolean') {
+    ioPanelVisible = layout.ioPanelVisible;
+  }
+  if (Number.isFinite(layout.editorSplitRatio)) {
+    editorSplitRatio = clampRatio(layout.editorSplitRatio!, 0.2, 0.9);
+  }
+  if (Number.isFinite(layout.ioSplitRatio)) {
+    ioSplitRatio = clampRatio(layout.ioSplitRatio!, 0.1, 0.9);
+  }
+}
+
+function scheduleLayoutSave() {
+  window.clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = window.setTimeout(() => {
+    try {
+      const layout: PersistedLayout = {
+        ioPanelVisible,
+        editorSplitRatio,
+        ioSplitRatio,
+      };
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+    } catch {}
+  }, SAVE_LAYOUT_DELAY_MS);
+}
+
+function clampRatio(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(value, max));
+}
+
+export function normalizeEditorFontSize(fontSize: number) {
+  return Math.max(10, Math.min(32, fontSize || 16));
+}
+
+export function applyEditorTextFont(fontSize: number) {
+  document.documentElement.style.setProperty('--editor-font-size', `${normalizeEditorFontSize(fontSize)}px`);
+}
 
 function getUiScale() {
   const scale = Number.parseFloat(
@@ -65,22 +127,40 @@ export function initZoomLayout(percent: number) {
   document.documentElement.style.setProperty('--app-zoom', scale.toString());
 }
 
-function clampEditorPanelWidth(requestedWidth?: number) {
+function getHorizontalLayoutWidth() {
+  const main = document.getElementById('main') as HTMLElement | null;
+  const resizer = document.getElementById('resizer') as HTMLElement | null;
+  if (!main) return window.innerWidth / getUiScale();
+
+  const resizerWidth = ioPanelVisible && resizer && !resizer.classList.contains('hidden')
+    ? resizer.offsetWidth
+    : 0;
+  return Math.max(0, main.clientWidth - resizerWidth);
+}
+
+function clampEditorPanelWidth(requestedWidth?: number, persist = false) {
   const editorPanel = document.getElementById('editor-panel') as HTMLElement | null;
   if (!editorPanel) return;
 
   const scale = getUiScale();
   const minEditorWidth = MIN_EDITOR_PANEL_WIDTH / scale;
   const minSidePanelWidth = MIN_SIDE_PANEL_WIDTH / scale;
-  const maxWidth = Math.max(
-    minEditorWidth,
-    window.innerWidth / scale - minSidePanelWidth,
-  );
-  const currentWidth = requestedWidth ?? toContentPixels(editorPanel.getBoundingClientRect().width);
+  const availableWidth = getHorizontalLayoutWidth();
+  const maxWidth = ioPanelVisible
+    ? Math.max(minEditorWidth, availableWidth - minSidePanelWidth)
+    : availableWidth;
+  const currentWidth = requestedWidth ?? availableWidth * editorSplitRatio;
   const clampedWidth = Math.max(minEditorWidth, Math.min(currentWidth, maxWidth));
 
   editorPanel.style.flex = 'none';
   editorPanel.style.width = `${clampedWidth}px`;
+
+  if (ioPanelVisible && availableWidth > 0) {
+    editorSplitRatio = clampRatio(clampedWidth / availableWidth, 0.2, 0.9);
+    if (persist) {
+      scheduleLayoutSave();
+    }
+  }
 }
 
 export function initThemeMenu(
@@ -93,15 +173,15 @@ export function initThemeMenu(
     const currentSize = config.editor_font_size || 16;
     const currentZoom = config.editor_zoom || 100;
 
-    let html = `<div style="padding:6px 12px;color:#808080;font-size:11px">${t('themeMenu.editorTheme')}</div>`;
+    let html = `<div class="theme-menu-heading">${t('themeMenu.editorTheme')}</div>`;
     for (const theme of themes) {
       html += `<div class="theme-option${theme.id === config.editor_theme ? ' active' : ''}" data-theme="${theme.id}">${theme.name}</div>`;
     }
     html += '<div class="sep"></div>';
-    html += `<div style="padding:6px 12px;color:#808080;font-size:11px">${t('themeMenu.fontSize')}</div>`;
+    html += `<div class="theme-menu-heading">${t('themeMenu.fontSize')}</div>`;
     html += `<div class="font-size-row"><button class="font-btn" data-delta="-1">-</button><span class="font-label">${currentSize}px</span><button class="font-btn" data-delta="1">+</button></div>`;
     html += '<div class="sep"></div>';
-    html += `<div style="padding:6px 12px;color:#808080;font-size:11px">${t('themeMenu.zoom')}</div>`;
+    html += `<div class="theme-menu-heading">${t('themeMenu.zoom')}</div>`;
     html += `<div class="font-size-row"><button class="font-btn" data-zoom="-10">-</button><span class="zoom-label">${currentZoom}%</span><button class="font-btn" data-zoom="10">+</button></div>`;
     menu.innerHTML = html;
   };
@@ -120,7 +200,8 @@ export function initThemeMenu(
 
       if (target.dataset.delta) {
         const delta = parseInt(target.dataset.delta, 10);
-        config.editor_font_size = Math.max(10, Math.min(32, config.editor_font_size + delta));
+        config.editor_font_size = normalizeEditorFontSize(config.editor_font_size + delta);
+        applyEditorTextFont(config.editor_font_size);
         applyFont(getView(), config.editor_font_size, config.editor_font_family);
         render();
         onChange();
@@ -221,7 +302,8 @@ export function initSettingsDialog(
       config.default_language = language.value || 'cpp';
       config.ui_language = uiLanguage.value || 'zh-CN';
       config.editor_theme = themeSelect.value || 'oneDark';
-      config.editor_font_size = Math.max(10, Math.min(32, parseInt(fontSize.value || '16', 10) || 16));
+      config.editor_font_size = normalizeEditorFontSize(parseInt(fontSize.value || '16', 10) || 16);
+      applyEditorTextFont(config.editor_font_size);
       config.editor_zoom = Math.max(50, Math.min(200, parseInt(zoom.value || '100', 10) || 100));
       config.editor_tab_size = Math.max(1, Math.min(8, parseInt(tabSize.value || '4', 10) || 4));
       config.auto_save_existing_files = autoSaveExisting.checked;
@@ -304,6 +386,7 @@ export function switchToOutput() {
 }
 
 export function initSidebar() {
+  applyPersistedLayout();
   const toggleButton = document.getElementById('btn-toggle-io') as HTMLButtonElement | null;
   if (toggleButton) {
     toggleButton.textContent = t('toolbar.io');
@@ -315,6 +398,7 @@ export function initSidebar() {
     toggleButton.dataset.bound = 'true';
   }
   bindIoResizer();
+  toggleIoPanel(ioPanelVisible, false);
   syncIoToggleButton();
 
   document.addEventListener('keydown', (e) => {
@@ -339,7 +423,7 @@ export function initResizer() {
 
   document.addEventListener('mousemove', (e) => {
     if (!on || !ioPanelVisible) return;
-    clampEditorPanelWidth(toContentPixels(e.clientX));
+    clampEditorPanelWidth(toContentPixels(e.clientX), true);
   });
 
   document.addEventListener('mouseup', () => {
@@ -352,7 +436,7 @@ export function initResizer() {
   requestAnimationFrame(() => clampEditorPanelWidth());
 }
 
-export function toggleIoPanel(visible?: boolean) {
+export function toggleIoPanel(visible?: boolean, persist = true) {
   const sidePanel = document.getElementById('side-panel');
   const resizer = document.getElementById('resizer');
   const editorPanel = document.getElementById('editor-panel');
@@ -377,6 +461,10 @@ export function toggleIoPanel(visible?: boolean) {
     }
     forceLayout(getView());
   });
+
+  if (persist) {
+    scheduleLayoutSave();
+  }
 }
 
 function syncIoToggleButton() {
@@ -416,6 +504,7 @@ function bindIoResizer() {
 
     ioSplitRatio = topHeight / availableHeight;
     applyIoSplit();
+    scheduleLayoutSave();
   };
 
   resizer.addEventListener('mousedown', (event) => {
