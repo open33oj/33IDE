@@ -93,6 +93,9 @@ export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty:
     },
     suggestOnTriggerCharacters: true,
     acceptSuggestionOnCommitCharacter: false,
+    // Enter should keep its code-editing meaning: newline / smart newline.
+    // Suggestions can still be accepted with Tab or the mouse.
+    acceptSuggestionOnEnter: 'off',
     suggestLineHeight: getSuggestLineHeight(),
     fixedOverflowWidgets: false,
     allowOverflow: false,
