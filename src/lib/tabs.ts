@@ -10,6 +10,7 @@ import {
 } from '../editor-setup';
 import { clearDiagnostics } from './diagnostics';
 import { t } from './i18n';
+import { setActivePathState, setStatusState } from './ui-store';
 
 export interface Tab {
   id: string;
@@ -27,19 +28,14 @@ let view: EditorView;
 const tabs: Tab[] = [];
 let activeTab: Tab | null = null;
 let tabCounter = 0;
-let suppressNextClickTabId: string | null = null;
 const dirtyListeners = new Set<(tab: Tab) => void>();
-
-type TabDragState = {
-  tabId: string;
-  startX: number;
-  startY: number;
-  started: boolean;
+const tabRenderListeners = new Set<() => void>();
+let tabsVersion = 0;
+let tabsSnapshot = {
+  version: tabsVersion,
+  tabs: [] as Tab[],
+  activeTabId: null as string | null,
 };
-
-let tabDragState: TabDragState | null = null;
-let tabDragListenersBound = false;
-const TAB_DRAG_THRESHOLD = 6;
 
 function createState(doc: string, onDirty?: () => void): EditorTabState {
   return {
@@ -61,6 +57,17 @@ export function getView(): EditorView { return view; }
 export function getTabs(): Tab[] { return tabs; }
 export function getActiveTab(): Tab | null { return activeTab; }
 export function getNextTabId(): string { return 'tab_' + (++tabCounter); }
+export function getTabDisplayPath(tab: Tab): string {
+  return tab.path || `${t('status.unsavedPrefix')}/${tab.name}`;
+}
+export function subscribeTabs(listener: () => void) {
+  tabRenderListeners.add(listener);
+  return () => tabRenderListeners.delete(listener);
+}
+
+export function getTabsSnapshot() {
+  return tabsSnapshot;
+}
 
 export function getTabContent(tab: Tab): string {
   return activeTab?.id === tab.id ? getEditorValue(view) : tab.state.model.getValue();
@@ -80,11 +87,12 @@ function notifyDirty(tab: Tab) {
 
 export function createTab(name: string, content: string, filePath: string = ''): Tab {
   const id = 'tab_' + Date.now();
+  const initialState = createState('');
   const tab: Tab = {
     id,
     name,
     path: filePath,
-    state: createState(''),
+    state: initialState,
     dirty: false,
     diskContent: filePath ? content : '',
     externalModified: false,
@@ -97,6 +105,7 @@ export function createTab(name: string, content: string, filePath: string = ''):
     renderTabs();
     notifyDirty(tab);
   });
+  initialState.model.dispose();
 
   tabs.push(tab);
   switchTo(tab);
@@ -157,13 +166,11 @@ export function replaceTabContent(
   const currentViewState = isActive ? view.saveViewState() : tab.state.viewState;
   const oldModel = tab.state.model;
 
-  const emptyModel = tab.state.model;
   tab.state = createState(content, () => {
     tab.dirty = true;
     renderTabs();
     notifyDirty(tab);
   });
-  emptyModel.dispose();
   tab.state.viewState = currentViewState;
   oldModel.dispose();
 
@@ -186,84 +193,7 @@ export function replaceTabContent(
   updateStatusbar();
 }
 
-function clearTabDropIndicators() {
-  document
-    .querySelectorAll('.editor-tab.drag-over-before, .editor-tab.drag-over-after')
-    .forEach((element) => element.classList.remove('drag-over-before', 'drag-over-after'));
-}
-
-function syncDraggedTabVisuals() {
-  document
-    .querySelectorAll('.editor-tab.dragging')
-    .forEach((element) => element.classList.remove('dragging'));
-
-  if (!tabDragState?.started) {
-    document.body.classList.remove('tab-dragging');
-    return;
-  }
-
-  document.body.classList.add('tab-dragging');
-  document
-    .querySelector<HTMLElement>(`.editor-tab[data-tab-id="${tabDragState.tabId}"]`)
-    ?.classList.add('dragging');
-}
-
-function finishTabDrag() {
-  const draggedTabId = tabDragState?.started ? tabDragState.tabId : null;
-  tabDragState = null;
-  clearTabDropIndicators();
-  syncDraggedTabVisuals();
-  suppressNextClickTabId = draggedTabId;
-}
-
-function bindTabDragListeners() {
-  if (tabDragListenersBound) return;
-  tabDragListenersBound = true;
-
-  document.addEventListener('pointermove', (event) => {
-    if (!tabDragState) return;
-
-    const dx = event.clientX - tabDragState.startX;
-    const dy = event.clientY - tabDragState.startY;
-    if (!tabDragState.started && Math.hypot(dx, dy) < TAB_DRAG_THRESHOLD) return;
-
-    tabDragState.started = true;
-    syncDraggedTabVisuals();
-
-    const targetEl = document.elementFromPoint(event.clientX, event.clientY)?.closest('.editor-tab') as HTMLElement | null;
-    if (!targetEl) {
-      clearTabDropIndicators();
-      return;
-    }
-
-    const targetId = targetEl.dataset.tabId;
-    if (!targetId || targetId === tabDragState.tabId) {
-      clearTabDropIndicators();
-      syncDraggedTabVisuals();
-      return;
-    }
-
-    clearTabDropIndicators();
-    const rect = targetEl.getBoundingClientRect();
-    const place = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
-    moveTab(tabDragState.tabId, targetId, place);
-
-    document
-      .querySelector<HTMLElement>(`.editor-tab[data-tab-id="${targetId}"]`)
-      ?.classList.add(place === 'before' ? 'drag-over-before' : 'drag-over-after');
-    syncDraggedTabVisuals();
-  });
-
-  const endDrag = () => {
-    if (!tabDragState) return;
-    finishTabDrag();
-  };
-
-  document.addEventListener('pointerup', endDrag);
-  document.addEventListener('pointercancel', endDrag);
-}
-
-function moveTab(tabId: string, targetId: string, place: 'before' | 'after') {
+export function moveTab(tabId: string, targetId: string, place: 'before' | 'after') {
   const fromIndex = tabs.findIndex((tab) => tab.id === tabId);
   const targetIndex = tabs.findIndex((tab) => tab.id === targetId);
   if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) return;
@@ -277,53 +207,14 @@ function moveTab(tabId: string, targetId: string, place: 'before' | 'after') {
 }
 
 export function renderTabs() {
-  const container = document.getElementById('editor-tabs')!;
-  container.innerHTML = '';
-  bindTabDragListeners();
-
-  tabs.forEach((tab) => {
-    const el = document.createElement('div');
-    el.className = 'editor-tab' + (tab.id === activeTab?.id ? ' active' : '');
-    el.setAttribute('data-tab-id', tab.id);
-
-    const label = document.createElement('span');
-    label.className = 'tab-label';
-    label.textContent = `${tab.name}${tab.dirty ? ' *' : ''}${tab.externalModified ? ' !' : ''}`;
-
-    const close = document.createElement('span');
-    close.className = 'tab-close';
-    close.textContent = '\u00d7';
-
-    el.append(label, close);
-
-    el.addEventListener('click', () => {
-      if (suppressNextClickTabId === tab.id) {
-        suppressNextClickTabId = null;
-        return;
-      }
-      switchTo(tab);
-    });
-    close.addEventListener('click', (event) => {
-      event.stopPropagation();
-      closeTab(tab.id);
-    });
-
-    el.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      if ((event.target as HTMLElement).closest('.tab-close')) return;
-      suppressNextClickTabId = null;
-      tabDragState = {
-        tabId: tab.id,
-        startX: event.clientX,
-        startY: event.clientY,
-        started: false,
-      };
-    });
-
-    container.appendChild(el);
-  });
-
-  syncDraggedTabVisuals();
+  tabsVersion += 1;
+  tabsSnapshot = {
+    version: tabsVersion,
+    tabs: [...tabs],
+    activeTabId: activeTab?.id ?? null,
+  };
+  setActivePathState(activeTab ? getTabDisplayPath(activeTab) : '');
+  tabRenderListeners.forEach((listener) => listener());
 }
 
 export function findTabByPath(path: string): Tab | undefined {
@@ -331,6 +222,8 @@ export function findTabByPath(path: string): Tab | undefined {
 }
 
 function updateStatusbar() {
+  setActivePathState(activeTab ? getTabDisplayPath(activeTab) : '');
+  setStatusState(activeTab ? activeTab.name : t('status.ready'));
   const statusText = document.getElementById('status-text');
   if (!statusText) return;
 

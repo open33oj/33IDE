@@ -18,6 +18,7 @@ pub struct LspCompletionItem {
     pub detail: Option<String>,
     pub insert_text: Option<String>,
     pub kind: Option<u64>,
+    pub sort_text: Option<String>,
     pub text_edit: Option<LspTextEdit>,
 }
 
@@ -53,12 +54,24 @@ impl ClangdClient {
         file_path: Option<String>,
         line: u32,
         character: u32,
+        trigger_character: Option<String>,
     ) -> Result<Vec<LspCompletionItem>, String> {
         let uri = self.sync_document(code, file_path)?;
+        // LSP triggerKind: 1 = Invoked, 2 = TriggerCharacter.
+        // clangd relies on the trigger context (especially for struct member
+        // access via . -> ::) to resolve the surrounding scope, so forwarding
+        // it is important; otherwise member completion can come back empty.
+        let context = match &trigger_character {
+            Some(ch) if !ch.is_empty() => json!({
+                "triggerKind": 2,
+                "triggerCharacter": ch
+            }),
+            _ => json!({ "triggerKind": 1 }),
+        };
         let result = self.request("textDocument/completion", json!({
             "textDocument": { "uri": uri },
             "position": { "line": line, "character": character },
-            "context": { "triggerKind": 1 }
+            "context": context
         }))?;
 
         Ok(parse_completion_items(result))
@@ -343,11 +356,12 @@ fn parse_completion_items(result: Value) -> Vec<LspCompletionItem> {
                 .as_ref()
                 .map(|edit| edit.new_text.clone())
                 .or_else(|| item.get("insertText").and_then(Value::as_str).map(|s| s.to_string()));
-            Some(LspCompletionItem {
+Some(LspCompletionItem {
                 label,
                 detail: item.get("detail").and_then(Value::as_str).map(|s| s.to_string()),
                 insert_text,
                 kind: item.get("kind").and_then(Value::as_u64),
+                sort_text: item.get("sortText").and_then(Value::as_str).map(|s| s.to_string()),
                 text_edit,
             })
         })

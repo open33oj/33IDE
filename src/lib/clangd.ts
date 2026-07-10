@@ -11,13 +11,21 @@ export function initClangdFeatures(filePathProvider: () => string | undefined) {
 
   monaco.languages.registerCompletionItemProvider('cpp', {
     triggerCharacters: ['.', '>', ':', '_'],
-    async provideCompletionItems(model, position) {
+    async provideCompletionItems(model, position, context) {
       try {
+        // Forward the real trigger context so clangd knows we are completing
+        // after a member-access operator (./->/::). Without this it can fail
+        // to resolve struct members.
+        const triggerCharacter =
+          context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter
+            ? context.triggerCharacter ?? null
+            : null;
         const items = await api.clangdComplete(
           model.getValue(),
           getActiveFilePath(),
           position.lineNumber - 1,
           position.column - 1,
+          triggerCharacter,
         );
         const word = model.getWordUntilPosition(position);
         const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
@@ -90,12 +98,21 @@ function toCompletionItem(item: ClangdCompletionItem, range: monaco.IRange): mon
       )
     : range;
 
+  const insertText = sanitizeInsertText(item.text_edit?.new_text || item.insert_text || item.label);
+
   return {
     label: item.label,
     kind: toCompletionKind(item.kind),
     detail: item.detail,
-    insertText: sanitizeInsertText(item.text_edit?.new_text || item.insert_text || item.label),
-    filterText: item.label,
+    insertText,
+    // Filter/score against the real insertion token (the identifier the user
+    // is actually typing) instead of the verbose label clangd emits with the
+    // `--completion-style=detailed` flag. This keeps prefix matches ranked
+    // above substring/fuzzy matches.
+    filterText: insertText,
+    // Preserve clangd's relevance order as the post-score tiebreaker so the
+    // built-in Monaco fuzzy score alone can't reshuffle struct members.
+    sortText: item.sort_text,
     range: completionRange,
   };
 }

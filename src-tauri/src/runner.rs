@@ -1,9 +1,8 @@
 use std::io::Read;
-use std::process::Command;
-use std::sync::mpsc;
+use std::process::{Child, Command};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use crate::settings::Settings;
 use crate::compiler::path_with_compiler_bin;
@@ -21,6 +20,8 @@ pub struct RunResult {
 
 static CURRENT_RUN_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 static RUN_CANCELLED: AtomicBool = AtomicBool::new(false);
+const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const KILL_WAIT_TIMEOUT_MS: u64 = 1500;
 
 fn run_pid_slot() -> &'static Mutex<Option<u32>> {
     CURRENT_RUN_PID.get_or_init(|| Mutex::new(None))
@@ -51,13 +52,36 @@ fn kill_process_tree(pid: u32) -> bool {
     }
 }
 
+fn request_kill_process_tree(pid: u32) {
+    std::thread::spawn(move || {
+        let _ = kill_process_tree(pid);
+    });
+}
+
+fn terminate_child(child: &mut Child) -> (Option<i32>, bool) {
+    let _ = child.kill();
+    request_kill_process_tree(child.id());
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(KILL_WAIT_TIMEOUT_MS) {
+        match child.try_wait() {
+            Ok(Some(status)) => return (status.code(), true),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(_) => return (None, false),
+        }
+    }
+
+    (None, false)
+}
+
 pub fn cancel_current_run() -> bool {
     RUN_CANCELLED.store(true, Ordering::SeqCst);
     let pid = run_pid_slot().lock().ok().and_then(|slot| *slot);
     let Some(pid) = pid else {
         return false;
     };
-    kill_process_tree(pid)
+    request_kill_process_tree(pid);
+    true
 }
 
 pub fn resolve_working_dir(run_dir: &Path, file_path: Option<&str>) -> PathBuf {
@@ -93,6 +117,7 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings, working_dir: &Path) 
         let start = Instant::now();
         let timeout = Duration::from_millis(settings.time_limit_ms.max(1));
         let mut timed_out = false;
+        let mut termination_confirmed = true;
 
         loop {
             if child.try_wait()?.is_some() {
@@ -100,17 +125,25 @@ pub fn run(bin: &PathBuf, input: &str, settings: &Settings, working_dir: &Path) 
             }
 
             if RUN_CANCELLED.load(Ordering::SeqCst) {
-                let _ = kill_process_tree(child.id());
+                termination_confirmed = terminate_child(&mut child).1;
                 break;
             }
 
             if start.elapsed() >= timeout {
                 timed_out = true;
-                let _ = kill_process_tree(child.id());
+                termination_confirmed = terminate_child(&mut child).1;
                 break;
             }
 
             std::thread::sleep(Duration::from_millis(10));
+        }
+
+        if !termination_confirmed {
+            set_current_run_pid(None);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "process did not exit after kill request",
+            ));
         }
 
         let output = child.wait_with_output();
@@ -190,19 +223,27 @@ where
     }
 
     let (tx, rx) = mpsc::channel::<(&'static str, String)>();
+    let output_bytes = Arc::new(AtomicUsize::new(0));
+    let output_limited = Arc::new(AtomicBool::new(false));
     let stdout_handle = child.stdout.take().map(|stdout| {
         let tx = tx.clone();
-        std::thread::spawn(move || read_stream("stdout", stdout, tx))
+        let output_bytes = output_bytes.clone();
+        let output_limited = output_limited.clone();
+        std::thread::spawn(move || read_stream("stdout", stdout, tx, output_bytes, output_limited))
     });
     let stderr_handle = child.stderr.take().map(|stderr| {
         let tx = tx.clone();
-        std::thread::spawn(move || read_stream("stderr", stderr, tx))
+        let output_bytes = output_bytes.clone();
+        let output_limited = output_limited.clone();
+        std::thread::spawn(move || read_stream("stderr", stderr, tx, output_bytes, output_limited))
     });
     drop(tx);
 
     let start = Instant::now();
     let timeout = Duration::from_millis(settings.time_limit_ms.max(1));
     let mut timed_out = false;
+    let mut output_limit_hit = false;
+    let mut termination_confirmed = true;
     let exit_code: Option<i32>;
     let mut stdout_text = String::new();
     let mut stderr_text = String::new();
@@ -215,6 +256,14 @@ where
                 stdout_text.push_str(&text);
             }
             on_output(stream, &text);
+        }
+
+        if output_limited.load(Ordering::SeqCst) {
+            output_limit_hit = true;
+            let terminated = terminate_child(&mut child);
+            exit_code = terminated.0;
+            termination_confirmed = terminated.1;
+            break;
         }
 
         match child.try_wait() {
@@ -236,26 +285,30 @@ where
         }
 
         if RUN_CANCELLED.load(Ordering::SeqCst) {
-            let _ = kill_process_tree(child.id());
-            exit_code = child.wait().ok().and_then(|status| status.code());
+            let terminated = terminate_child(&mut child);
+            exit_code = terminated.0;
+            termination_confirmed = terminated.1;
             break;
         }
 
         if start.elapsed() >= timeout {
             timed_out = true;
-            let _ = kill_process_tree(child.id());
-            exit_code = child.wait().ok().and_then(|status| status.code());
+            let terminated = terminate_child(&mut child);
+            exit_code = terminated.0;
+            termination_confirmed = terminated.1;
             break;
         }
 
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    if let Some(handle) = stdout_handle {
-        let _ = handle.join();
-    }
-    if let Some(handle) = stderr_handle {
-        let _ = handle.join();
+    if termination_confirmed {
+        if let Some(handle) = stdout_handle {
+            let _ = handle.join();
+        }
+        if let Some(handle) = stderr_handle {
+            let _ = handle.join();
+        }
     }
 
     while let Ok((stream, text)) = rx.try_recv() {
@@ -273,6 +326,8 @@ where
         "cancelled"
     } else if timed_out {
         "timeout"
+    } else if output_limit_hit {
+        "output_limit"
     } else if exit_code == Some(0) {
         "ok"
     } else {
@@ -292,14 +347,27 @@ fn read_stream<R: Read + Send + 'static>(
     stream: &'static str,
     mut reader: R,
     tx: mpsc::Sender<(&'static str, String)>,
+    output_bytes: Arc<AtomicUsize>,
+    output_limited: Arc<AtomicBool>,
 ) {
     let mut buffer = [0u8; 1024];
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                let text = String::from_utf8_lossy(&buffer[..n]).to_string();
+                let previous = output_bytes.fetch_add(n, Ordering::SeqCst);
+                if previous >= MAX_OUTPUT_BYTES {
+                    output_limited.store(true, Ordering::SeqCst);
+                    break;
+                }
+
+                let allowed = (MAX_OUTPUT_BYTES - previous).min(n);
+                let text = String::from_utf8_lossy(&buffer[..allowed]).to_string();
                 if tx.send((stream, text)).is_err() {
+                    break;
+                }
+                if allowed < n {
+                    output_limited.store(true, Ordering::SeqCst);
                     break;
                 }
             }

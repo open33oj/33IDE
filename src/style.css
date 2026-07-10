@@ -3,6 +3,15 @@ body, h1, h2, h3, p, ul, ol, button, input, textarea, select { margin: 0; }
 :root { --app-zoom: 1; --editor-font-size: 16px; }
 html, body { height: 100%; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1e1e1e; color: #cccccc; display: flex; flex-direction: column; font-size: 16px; overflow: hidden; }
+body.theme-dark { color-scheme: dark; }
+body.theme-light { color-scheme: light; }
+#root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 #zoom-root {
   position: fixed;
   inset: 0 auto auto 0;
@@ -14,6 +23,37 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Loading */
+.loading-overlay { position: fixed; inset: 0; z-index: 9999; background: #1e1e1e; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+.loading-overlay.hidden { display: none; }
+.loading-overlay .spinner { width: 24px; height: 24px; border: 2px solid #3c3c3c; border-top-color: #DB5B6B; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-overlay .loading-text { color: #808080; font-size: 12px; }
+.loading-overlay .progress-bar { width: 200px; height: 3px; background: #3c3c3c; border-radius: 2px; overflow: hidden; }
+.loading-overlay .progress-bar .progress-fill { height: 100%; background: #DB5B6B; border-radius: 2px; transition: width .3s ease; }
+
+/* Scrollbars */
+body.theme-dark,
+body.theme-dark .settings-body,
+body.theme-dark #output-content,
+body.theme-dark #input-area {
+  scrollbar-color: #5a5f66 #1f2023;
+}
+body.theme-light,
+body.theme-light .settings-body,
+body.theme-light #output-content,
+body.theme-light #input-area {
+  scrollbar-color: #b6bec8 #f7f8fa;
+}
+body.theme-dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.theme-light ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.theme-dark ::-webkit-scrollbar-track { background: #1f2023; }
+body.theme-dark ::-webkit-scrollbar-thumb { background: #5a5f66; border: 2px solid #1f2023; border-radius: 999px; }
+body.theme-dark ::-webkit-scrollbar-thumb:hover { background: #737982; }
+body.theme-light ::-webkit-scrollbar-track { background: #f7f8fa; }
+body.theme-light ::-webkit-scrollbar-thumb { background: #b6bec8; border: 2px solid #f7f8fa; border-radius: 999px; }
+body.theme-light ::-webkit-scrollbar-thumb:hover { background: #8f99a6; }
 
 /* Menu */
 #menubar { display: flex; align-items: center; padding: 0 8px; height: 38px; background: #252526; border-bottom: 1px solid #3c3c3c; flex-shrink: 0; font-size: 16px; }
@@ -176,7 +216,8 @@ body.selection-dragging :where(:not(.monaco-editor):not(.monaco-editor *)) { cur
 #statusbar { height: 24px; background: #007acc; color: white; font-size: 13px; display: flex; align-items: center; padding: 0 12px; flex-shrink: 0; }
 #statusbar.error { background: #d32029; }
 #statusbar.success { background: #49aa19; }
-#status-text { flex: 1; }
+#status-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status-text { flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.92; padding-left: 12px; }
 #compiler-info { font-size: 11px; color: white; opacity: 0.9; }
 
 /* Context Menu */

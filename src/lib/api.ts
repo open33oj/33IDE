@@ -31,6 +31,7 @@ export interface ClangdCompletionItem {
   detail?: string;
   insert_text?: string;
   kind?: number;
+  sort_text?: string;
   text_edit?: {
     new_text: string;
     start_line: number;
@@ -63,8 +64,14 @@ export const api = {
   writeFile: (path: string, content: string) => invoke<void>('write_file', { path, content }),
   revealInExplorer: (path: string) => invoke<void>('reveal_in_explorer', { path }),
   formatCode: (code: string, tabSize: number) => invoke<string>('format_code', { code, tabSize }),
-  clangdComplete: (code: string, filePath: string | undefined, line: number, character: number) =>
-    invoke<ClangdCompletionItem[]>('clangd_complete', { code, filePath, line, character }),
+  clangdComplete: (
+    code: string,
+    filePath: string | undefined,
+    line: number,
+    character: number,
+    triggerCharacter?: string | null,
+  ) =>
+    invoke<ClangdCompletionItem[]>('clangd_complete', { code, filePath, line, character, triggerCharacter }),
   clangdHover: (code: string, filePath: string | undefined, line: number, character: number) =>
     invoke<string | null>('clangd_hover', { code, filePath, line, character }),
   clangdSignatureHelp: (code: string, filePath: string | undefined, line: number, character: number) =>

@@ -6,6 +6,7 @@ import { clearDiagnostics, setDiagnostics, parseGccErrors, formatCompilerDiagnos
 import { t } from './i18n';
 import { getActiveTab, getView } from './tabs';
 import { appendOutput, setStatus, showOutput, switchToOutput } from './ui';
+import { setRunButtonStateSnapshot } from './ui-store';
 
 let runActive = false;
 let stopRequested = false;
@@ -30,6 +31,7 @@ interface RunFinishedEvent {
 }
 
 function setRunButtonState(running: boolean) {
+  setRunButtonStateSnapshot(running, running ? t('toolbar.stop') : t('toolbar.run'), false);
   const btn = document.getElementById('btn-run') as HTMLButtonElement | null;
   if (!btn) return;
 
@@ -221,15 +223,10 @@ function ensureRunListeners() {
 }
 
 function renderStreamingRunResult(result: RunFinishedEvent) {
-  const output = document.getElementById('output-content')!;
-
   if (result.status === 'compile_error') {
-    output.textContent = '';
-    const errLabel = document.createElement('span');
-    errLabel.className = 'error';
-    errLabel.textContent = t('output.compileError');
-    output.appendChild(errLabel);
-    output.appendChild(document.createTextNode(formatCompilerDiagnostics(result.raw_stderr || result.stderr || '')));
+    showOutput('');
+    appendOutput(t('output.compileError'), 'error');
+    appendOutput(formatCompilerDiagnostics(result.raw_stderr || result.stderr || ''));
     setStatus(t('status.compileError'), 'error');
 
     const view = getView();
@@ -252,8 +249,14 @@ function renderStreamingRunResult(result: RunFinishedEvent) {
     return;
   }
 
+  if (result.status === 'output_limit') {
+    appendOutput(`\n${t('output.outputLimit')}`, 'error');
+    setStatus(t('status.outputLimit'), 'error');
+    return;
+  }
+
   if (result.status === 'interactive_console_required') {
-    output.textContent = '';
+    showOutput('');
     appendOutput(t('output.interactiveConsoleRequired'), 'error');
     setStatus(t('status.interactiveConsoleRequired'), 'error');
     return;
@@ -300,15 +303,10 @@ export async function runInTerminal() {
 }
 
 function renderRunResult(result: RunResult) {
-  const output = document.getElementById('output-content')!;
-
   if (result.status === 'compile_error') {
-    output.textContent = '';
-    const errLabel = document.createElement('span');
-    errLabel.className = 'error';
-    errLabel.textContent = t('output.compileError');
-    output.appendChild(errLabel);
-    output.appendChild(document.createTextNode(formatCompilerDiagnostics(result.raw_stderr || result.stderr || '')));
+    showOutput('');
+    appendOutput(t('output.compileError'), 'error');
+    appendOutput(formatCompilerDiagnostics(result.raw_stderr || result.stderr || ''));
     setStatus(t('status.compileError'), 'error');
 
     const view = getView();
@@ -320,14 +318,14 @@ function renderRunResult(result: RunResult) {
   }
 
   if (result.status === 'cancelled') {
-    output.textContent = '';
+    showOutput('');
     appendOutput(t('output.cancelled'), 'info');
     setStatus(t('status.runCancelled'), 'info');
     return;
   }
 
   if (result.status === 'timeout') {
-    output.textContent = '';
+    showOutput('');
     appendOutput(result.stdout || '', 'success');
     if (result.stderr) appendOutput(result.stderr, 'error');
     appendOutput(t('output.timeout', { time: result.time_ms }), 'error');
@@ -335,23 +333,24 @@ function renderRunResult(result: RunResult) {
     return;
   }
 
-  output.textContent = '';
-  output.appendChild(document.createTextNode(result.stdout || ''));
-  if (result.stderr) {
-    const errSpan = document.createElement('span');
-    errSpan.className = 'error';
-    errSpan.textContent = result.stderr;
-    output.appendChild(errSpan);
+  if (result.status === 'output_limit') {
+    showOutput('');
+    appendOutput(result.stdout || '');
+    if (result.stderr) appendOutput(result.stderr, 'error');
+    appendOutput(`\n${t('output.outputLimit')}`, 'error');
+    setStatus(t('status.outputLimit'), 'error');
+    return;
   }
 
+  showOutput('');
+  appendOutput(result.stdout || '');
+  if (result.stderr) appendOutput(result.stderr, 'error');
+
   const cls = result.exit_code === 0 ? 'success' : 'error';
-  const info = document.createElement('span');
-  info.className = cls;
-  info.textContent = t('output.exitInfo', {
+  appendOutput(t('output.exitInfo', {
     code: result.exit_code ?? '-',
     time: result.time_ms,
-  });
-  output.appendChild(info);
+  }), cls);
 
   setStatus(
     result.exit_code === 0 ? t('status.runSuccess') : t('status.runFailed'),

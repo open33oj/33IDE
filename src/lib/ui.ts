@@ -13,10 +13,12 @@ import { api, AppConfig } from './api';
 import { showContextMenu, MenuItem } from './context-menu';
 import { t } from './i18n';
 import { closeTab, getActiveTab, getTabs, getView, switchTo, type Tab } from './tabs';
+import { appendOutputHtml, setOutputHtml, setStatusState } from './ui-store';
 
 const MIN_EDITOR_PANEL_WIDTH = 200;
 const MIN_SIDE_PANEL_WIDTH = 280;
 const MIN_IO_SECTION_HEIGHT = 140;
+const MAX_EDITOR_FONT_SIZE = 96;
 const IO_RESIZER_HEIGHT = 6;
 const ZOOM_ROOT_ID = 'zoom-root';
 const LAYOUT_STORAGE_KEY = '33ide.layout.v1';
@@ -77,7 +79,7 @@ function clampRatio(value: number, min: number, max: number) {
 }
 
 export function normalizeEditorFontSize(fontSize: number) {
-  return Math.max(10, Math.min(32, fontSize || 16));
+  return Math.max(10, Math.min(MAX_EDITOR_FONT_SIZE, fontSize || 16));
 }
 
 export function applyEditorTextFont(fontSize: number) {
@@ -142,20 +144,28 @@ function clampEditorPanelWidth(requestedWidth?: number, persist = false) {
   const editorPanel = document.getElementById('editor-panel') as HTMLElement | null;
   if (!editorPanel) return;
 
+  // When the IO panel is hidden the editor must fill the whole main area via
+  // flex. If a fixed pixel width were applied here, resizing the window would
+  // leave a visible ghost region where the (now display:none) side panel used
+  // to be, and Monaco would not relayout the editor into that area either.
+  if (!ioPanelVisible) {
+    editorPanel.style.width = '';
+    editorPanel.style.flex = '1 1 auto';
+    return;
+  }
+
   const scale = getUiScale();
   const minEditorWidth = MIN_EDITOR_PANEL_WIDTH / scale;
   const minSidePanelWidth = MIN_SIDE_PANEL_WIDTH / scale;
   const availableWidth = getHorizontalLayoutWidth();
-  const maxWidth = ioPanelVisible
-    ? Math.max(minEditorWidth, availableWidth - minSidePanelWidth)
-    : availableWidth;
+  const maxWidth = Math.max(minEditorWidth, availableWidth - minSidePanelWidth);
   const currentWidth = requestedWidth ?? availableWidth * editorSplitRatio;
   const clampedWidth = Math.max(minEditorWidth, Math.min(currentWidth, maxWidth));
 
   editorPanel.style.flex = 'none';
   editorPanel.style.width = `${clampedWidth}px`;
 
-  if (ioPanelVisible && availableWidth > 0) {
+  if (availableWidth > 0) {
     editorSplitRatio = clampRatio(clampedWidth / availableWidth, 0.2, 0.9);
     if (persist) {
       scheduleLayoutSave();
@@ -360,16 +370,23 @@ export function applyZoom(percent: number) {
 }
 
 export function setStatus(text: string, type?: string) {
-  document.getElementById('status-text')!.textContent = text;
-  document.getElementById('statusbar')!.className = type || '';
+  setStatusState(text, type || '');
+  const statusText = document.getElementById('status-text');
+  const statusbar = document.getElementById('statusbar');
+  if (statusText) statusText.textContent = text;
+  if (statusbar) statusbar.className = type || '';
 }
 
 export function showOutput(html: string) {
-  document.getElementById('output-content')!.innerHTML = html;
+  setOutputHtml(html);
+  const output = document.getElementById('output-content');
+  if (output) output.innerHTML = html;
 }
 
 export function appendOutput(text: string, className?: string) {
-  const output = document.getElementById('output-content')!;
+  appendOutputHtml(text, className);
+  const output = document.getElementById('output-content');
+  if (!output) return;
   const span = document.createElement('span');
   if (className) span.className = className;
   span.textContent = text;

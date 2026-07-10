@@ -3,6 +3,7 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inlin
 import { conf as cppConf, language as cppLanguage } from 'monaco-editor/esm/vs/basic-languages/cpp/cpp';
 import { SuggestWidget } from 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestWidget';
 import { defineMonacoThemes, getTheme, themes } from './lib/themes';
+import { setThemeModeState } from './lib/ui-store';
 
 (self as any).MonacoEnvironment = {
   getWorker() {
@@ -18,6 +19,7 @@ export type EditorViewState = monaco.editor.ICodeEditorViewState;
 const DEFAULT_FONT = "'Consolas', 'Courier New', 'Microsoft YaHei', 'SimHei', 'NSimSun', monospace";
 const SUGGEST_LINE_HEIGHT_RATIO = 1.45;
 const SUGGEST_VISIBLE_ITEMS = 3;
+const MAX_EDITOR_FONT_SIZE = 96;
 
 let currentThemeId = 'oneDark';
 let currentTabSize = 4;
@@ -26,6 +28,7 @@ let currentFontFamily = DEFAULT_FONT;
 let monacoBootstrapped = false;
 let cppLanguageRegistered = false;
 let suggestWidgetPatched = false;
+let devicePixelRatioWatcherStarted = false;
 const layoutObservers = new WeakMap<EditorView, ResizeObserver>();
 const TOKEN_STYLE_ID = '33ide-monaco-token-colors';
 
@@ -40,6 +43,7 @@ export function bootstrapMonaco() {
   patchSuggestWidgetLayout();
   registerCppLanguage();
   defineMonacoThemes(monaco);
+  installDevicePixelRatioWatcher();
   warmCppTokenizer();
 }
 
@@ -48,6 +52,7 @@ export function createEditor(parent: HTMLElement, _initialDoc: string, _onDirty:
   const theme = getTheme(currentThemeId);
   document.body.classList.remove('theme-dark', 'theme-light');
   document.body.classList.add('theme-' + theme.mode);
+  setThemeModeState(theme.mode);
 
   const editor = monaco.editor.create(parent, {
     model: null,
@@ -199,6 +204,7 @@ export function switchTheme(_view: EditorView, themeId: string) {
   monaco.editor.setTheme(theme.monacoTheme);
   document.body.classList.remove('theme-dark', 'theme-light');
   document.body.classList.add('theme-' + theme.mode);
+  setThemeModeState(theme.mode);
   scheduleScopedTokenColors();
   fixEditorStyles();
 }
@@ -217,7 +223,7 @@ export function applyTabSize(view: EditorView, tabSize: number) {
 }
 
 export function applyFont(view: EditorView, fontSize: number, fontFamily?: string) {
-  currentFontSize = Math.max(10, Math.min(32, fontSize || 16));
+  currentFontSize = Math.max(10, Math.min(MAX_EDITOR_FONT_SIZE, fontSize || 16));
   currentFontFamily = fontFamily || DEFAULT_FONT;
   view.updateOptions({
     fontSize: currentFontSize,
@@ -271,6 +277,31 @@ function installEditorLayoutStabilizer(view: EditorView, parent: HTMLElement) {
     document.removeEventListener('visibilitychange', onVisibilityChange);
     layoutObservers.delete(view);
   });
+}
+
+function installDevicePixelRatioWatcher() {
+  if (devicePixelRatioWatcherStarted || typeof window === 'undefined') return;
+  devicePixelRatioWatcherStarted = true;
+
+  let query: MediaQueryList | null = null;
+  const relayout = () => {
+    monaco.editor.remeasureFonts();
+    for (const editor of monaco.editor.getEditors()) {
+      scheduleEditorLayout(editor, 4);
+    }
+  };
+  const bind = () => {
+    query?.removeEventListener('change', handleChange);
+    query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    query.addEventListener('change', handleChange);
+  };
+  const handleChange = () => {
+    relayout();
+    bind();
+  };
+
+  bind();
+  window.addEventListener('resize', relayout);
 }
 
 export function lockGutterWidths(_view: EditorView) {

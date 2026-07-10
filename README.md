@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.0.4`
+- `v1.5.0`
 
 ## 内置工具版本
 
@@ -19,6 +19,18 @@
 
 <details>
 <summary>查看完整更新日志</summary>
+
+### v1.5.0
+
+- 前端整体迁移到 `React + Mantine`，保留 Monaco / Tauri 核心能力，并为后续功能扩展整理 UI 状态桥接层。
+- Mantine 全局暗色 / 亮色模式现在跟随 Monaco 编辑器主题，设置弹窗和全局滚动条会同步切换明暗样式。
+- 运行取消和超时处理更稳健：停止操作会异步清理进程树，运行线程不会在 kill 后无限等待 stdout / stderr reader。
+- 嵌入式输出面板新增输出上限保护，避免无限输出把 WebView 事件流冲卡。
+- 左下角状态栏新增当前文件路径显示；未保存文件显示为 `未保存/main.cpp`，已保存文件显示完整路径。
+- 编辑器字号上限从 `32` 放宽到 `96`，设置面板同步支持更大的字号范围。
+- 增加 `devicePixelRatio` 变化监听，窗口移动到不同缩放比例的高分屏时会触发 Monaco 字体重测和布局刷新。
+- 修复 tab 内容替换时 Monaco model 重复 dispose，以及新建 tab 时临时空 model 泄漏的问题。
+- `tsconfig.json` 改为 `noEmit`，由 Vite 负责产物输出，TypeScript 配置只承担类型检查职责。
 
 ### v1.0.4
 
@@ -217,7 +229,7 @@ cd C:\Users\daiji\Documents\work\33IDE
 npm run tauri:dev
 ```
 
-看到桌面窗口弹出，且标题显示 `33IDE Lite v1.0.4`，说明本地开发环境已经正常启动。
+看到桌面窗口弹出，且标题显示 `33IDE Lite v1.5.0`，说明本地开发环境已经正常启动。
 
 ## 常用开发命令
 

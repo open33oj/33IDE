@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -517,11 +517,12 @@ fn clangd_complete(
     file_path: Option<String>,
     line: u32,
     character: u32,
+    trigger_character: Option<String>,
 ) -> Result<Vec<clangd::LspCompletionItem>, String> {
     state
         .lock()
         .map_err(|e| e.to_string())?
-        .complete(code, file_path, line, character)
+        .complete(code, file_path, line, character, trigger_character)
 }
 
 #[tauri::command]
@@ -589,6 +590,14 @@ fn main() {
         ]);
 
     builder
+        .setup(|app| {
+            let version = app.package_info().version.to_string();
+            let title = format!("33IDE Lite v{}", version);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&title);
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

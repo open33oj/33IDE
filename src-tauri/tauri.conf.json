@@ -1,7 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "33IDE Lite",
-  "version": "1.0.4",
   "identifier": "com.33ide.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -14,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "33IDE Lite v1.0.4",
+        "title": "33IDE Lite",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

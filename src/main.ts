@@ -1,8 +1,13 @@
 import 'monaco-editor/min/vs/editor/editor.main.css';
 import 'monaco-editor/esm/vs/editor/editor.all';
+import '@mantine/core/styles.css';
 import './style.css';
+import { createElement } from 'react';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { message } from '@tauri-apps/plugin-dialog';
+import { App } from './App';
 import { api, AppConfig } from './lib/api';
 import { initContextMenuDismiss } from './lib/context-menu';
 import { applyFont, applyTabSize, fixEditorStyles, forceLayout, lockGutterWidths, setDefaultTabSize, switchTheme } from './editor-setup';
@@ -29,6 +34,16 @@ const DEFAULT_CONFIG: AppConfig = {
   clang_format_brace_on_new_line: false,
   auto_save_existing_files: false,
 };
+
+function mountReactApp() {
+  const rootEl = document.getElementById('root');
+  if (!rootEl) throw new Error('React root element was not found.');
+
+  const root = createRoot(rootEl);
+  flushSync(() => {
+    root.render(createElement(App));
+  });
+}
 
 function setProgress(percent: number, text: string) {
   const fill = document.getElementById('progress-fill');
@@ -218,11 +233,16 @@ async function init() {
   await yieldToMain();
   await paint();
 
-  document.getElementById('loading-overlay')?.remove();
+  document.getElementById('loading-overlay')?.classList.add('hidden');
   setStatus(t('status.ready'));
 }
 
-document.addEventListener('DOMContentLoaded', init);
+mountReactApp();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init, { once: true });
+} else {
+  void init();
+}
 
 function initCloseGuard() {
   const appWindow = getCurrentWindow();
