@@ -3,9 +3,9 @@
   "productName": "33IDE Lite",
   "identifier": "com.33ide.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "yarn run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "yarn run build",
     "frontendDist": "../dist"
   },
   "app": {

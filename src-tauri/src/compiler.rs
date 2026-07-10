@@ -1,13 +1,12 @@
-use std::io::Read;
 use std::process::Command;
 use std::path::PathBuf;
 use std::fs;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::OnceLock;
+use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use crate::settings::Settings;
+use crate::process_runner::{self, ManagedCommandOptions, ProcessSlot};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -20,46 +19,13 @@ pub struct CompileResult {
 }
 
 const COMPILE_TIMEOUT_MS: u64 = 60_000;
+const KILL_WAIT_TIMEOUT_MS: u64 = 1500;
 
-static CURRENT_COMPILE_PID: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+static CURRENT_COMPILE_PROCESS: ProcessSlot = OnceLock::new();
 static COMPILE_CANCELLED: AtomicBool = AtomicBool::new(false);
 
-fn compile_pid_slot() -> &'static Mutex<Option<u32>> {
-    CURRENT_COMPILE_PID.get_or_init(|| Mutex::new(None))
-}
-
-fn set_current_compile_pid(pid: Option<u32>) {
-    if let Ok(mut slot) = compile_pid_slot().lock() {
-        *slot = pid;
-    }
-}
-
-fn kill_process_tree(pid: u32) -> bool {
-    #[cfg(windows)]
-    {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x00000008)
-            .output()
-            .is_ok()
-    }
-
-    #[cfg(not(windows))]
-    {
-        Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output()
-            .is_ok()
-    }
-}
-
 pub fn cancel_current_compile() -> bool {
-    let pid = compile_pid_slot().lock().ok().and_then(|slot| *slot);
-    let Some(pid) = pid else {
-        return false;
-    };
-    COMPILE_CANCELLED.store(true, Ordering::SeqCst);
-    kill_process_tree(pid)
+    process_runner::cancel_current_process(&CURRENT_COMPILE_PROCESS, &COMPILE_CANCELLED)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -446,96 +412,25 @@ pub fn compile(src: &PathBuf, out: &PathBuf, settings: &Settings) -> CompileResu
 
     COMPILE_CANCELLED.store(false, Ordering::SeqCst);
 
-    let output = command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            set_current_compile_pid(Some(child.id()));
+    let options = ManagedCommandOptions {
+        input: None,
+        timeout: Duration::from_millis(COMPILE_TIMEOUT_MS),
+        output_limit: None,
+        kill_wait_timeout: Duration::from_millis(KILL_WAIT_TIMEOUT_MS),
+    };
 
-            let (tx, rx) = mpsc::channel::<(&'static str, String)>();
-            let stdout_handle = child.stdout.take().map(|stdout| {
-                let tx = tx.clone();
-                std::thread::spawn(move || read_stream("stdout", stdout, tx))
-            });
-            let stderr_handle = child.stderr.take().map(|stderr| {
-                let tx = tx.clone();
-                std::thread::spawn(move || read_stream("stderr", stderr, tx))
-            });
-            drop(tx);
-
-            let start = Instant::now();
-            let timeout = Duration::from_millis(COMPILE_TIMEOUT_MS);
-            let mut timed_out = false;
-            let exit_status;
-            let mut stdout_text = String::new();
-            let mut stderr_text = String::new();
-
-            loop {
-                while let Ok((stream, text)) = rx.try_recv() {
-                    if stream == "stderr" {
-                        stderr_text.push_str(&text);
-                    } else {
-                        stdout_text.push_str(&text);
-                    }
-                }
-
-                match child.try_wait()? {
-                    Some(status) => {
-                        exit_status = status;
-                        break;
-                    }
-                    None => {}
-                }
-
-                if COMPILE_CANCELLED.load(Ordering::SeqCst) {
-                    let _ = kill_process_tree(child.id());
-                    exit_status = child.wait()?;
-                    break;
-                }
-
-                if start.elapsed() >= timeout {
-                    timed_out = true;
-                    let _ = kill_process_tree(child.id());
-                    exit_status = child.wait()?;
-                    break;
-                }
-
-                std::thread::sleep(Duration::from_millis(10));
-            }
-
-            if let Some(handle) = stdout_handle {
-                let _ = handle.join();
-            }
-            if let Some(handle) = stderr_handle {
-                let _ = handle.join();
-            }
-
-            while let Ok((stream, text)) = rx.try_recv() {
-                if stream == "stderr" {
-                    stderr_text.push_str(&text);
-                } else {
-                    stdout_text.push_str(&text);
-                }
-            }
-
-            set_current_compile_pid(None);
-            Ok((exit_status, stdout_text, stderr_text, timed_out))
-        });
-
-    match output {
-        Ok((status, _stdout, stderr, timed_out)) => {
-            let cancelled = COMPILE_CANCELLED.swap(false, Ordering::SeqCst);
-            if cancelled {
+    match process_runner::run_managed_command(&mut command, options, &COMPILE_CANCELLED, &CURRENT_COMPILE_PROCESS, |_, _| {}) {
+        Ok(output) => {
+            if output.cancelled {
                 CompileResult {
                     success: false,
                     error: Some("Compilation cancelled".to_string()),
                     raw_error: Some("Compilation cancelled".to_string()),
                     status: Some("cancelled".to_string()),
                 }
-            } else if status.success() {
+            } else if output.status.map(|status| status.success()).unwrap_or(false) {
                 CompileResult { success: true, error: None, raw_error: None, status: None }
-            } else if timed_out {
+            } else if output.timed_out {
                 CompileResult {
                     success: false,
                     error: Some("Compilation timed out".to_string()),
@@ -545,40 +440,19 @@ pub fn compile(src: &PathBuf, out: &PathBuf, settings: &Settings) -> CompileResu
             } else {
                 CompileResult {
                     success: false,
-                    error: Some(translate_gcc_error(&stderr)),
-                    raw_error: Some(stderr),
+                    error: Some(translate_gcc_error(&output.stderr)),
+                    raw_error: Some(output.stderr),
                     status: None,
                 }
             }
         }
         Err(e) => {
-            set_current_compile_pid(None);
             CompileResult {
                 success: false,
                 error: Some(describe_command_error("compiler", &compiler, &e)),
                 raw_error: None,
                 status: None,
             }
-        }
-    }
-}
-
-fn read_stream<R: Read + Send + 'static>(
-    stream: &'static str,
-    mut reader: R,
-    tx: mpsc::Sender<(&'static str, String)>,
-) {
-    let mut buffer = [0u8; 1024];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => {
-                let text = String::from_utf8_lossy(&buffer[..n]).to_string();
-                if tx.send((stream, text)).is_err() {
-                    break;
-                }
-            }
-            Err(_) => break,
         }
     }
 }

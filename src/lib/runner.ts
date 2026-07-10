@@ -12,6 +12,8 @@ let runActive = false;
 let stopRequested = false;
 let runListenersReady: Promise<void> | null = null;
 let outputWaitingForFirstChunk = false;
+let pendingOutputChunks: Array<{ text: string; className?: string }> = [];
+let outputFlushFrame: number | null = null;
 
 interface RunPhaseEvent {
   phase: 'compiling' | 'running';
@@ -39,6 +41,29 @@ function setRunButtonState(running: boolean) {
   btn.classList.toggle('primary', !running);
   btn.classList.toggle('danger', running);
   btn.textContent = running ? t('toolbar.stop') : t('toolbar.run');
+}
+
+function flushQueuedOutput() {
+  outputFlushFrame = null;
+  const chunks = pendingOutputChunks;
+  pendingOutputChunks = [];
+  for (const chunk of chunks) {
+    appendOutput(chunk.text, chunk.className);
+  }
+}
+
+function queueOutput(text: string, className?: string) {
+  pendingOutputChunks.push({ text, className });
+  if (outputFlushFrame != null) return;
+  outputFlushFrame = window.requestAnimationFrame(flushQueuedOutput);
+}
+
+function clearQueuedOutput() {
+  if (outputFlushFrame != null) {
+    window.cancelAnimationFrame(outputFlushFrame);
+    outputFlushFrame = null;
+  }
+  pendingOutputChunks = [];
 }
 
 export async function formatCurrentCode() {
@@ -162,6 +187,7 @@ export async function runCode() {
     clearDiagnostics(view);
     switchToOutput();
     outputWaitingForFirstChunk = false;
+    clearQueuedOutput();
     showOutput(`<span class="info">${t('output.compiling')}</span>`);
     await api.startCompileAndRun(code, input || undefined, filePath);
   } catch (e: any) {
@@ -194,10 +220,12 @@ function ensureRunListeners() {
       if (!runActive) return;
       if (event.payload.phase === 'running') {
         outputWaitingForFirstChunk = true;
+        clearQueuedOutput();
         showOutput(`<span class="info">${t('output.running')}</span>\n`);
         setStatus(t('toolbar.running'), 'info');
       } else {
         outputWaitingForFirstChunk = false;
+        clearQueuedOutput();
         showOutput(`<span class="info">${t('output.compiling')}</span>`);
       }
     }),
@@ -207,11 +235,12 @@ function ensureRunListeners() {
         showOutput('');
         outputWaitingForFirstChunk = false;
       }
-      appendOutput(event.payload.text, event.payload.stream === 'stderr' ? 'error' : undefined);
+      queueOutput(event.payload.text, event.payload.stream === 'stderr' ? 'error' : undefined);
     }),
     listen<RunFinishedEvent>('run-finished', (event) => {
       if (!runActive) return;
       outputWaitingForFirstChunk = false;
+      flushQueuedOutput();
       renderStreamingRunResult(event.payload);
       runActive = false;
       stopRequested = false;

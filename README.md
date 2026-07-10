@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.5.0`
+- `v1.5.1`
 
 ## 内置工具版本
 
@@ -19,6 +19,14 @@
 
 <details>
 <summary>查看完整更新日志</summary>
+
+### v1.5.1
+
+- 统一编译与运行进程管理，取消、超时和输出上限处理现在共用同一套托管流程，减少停止运行后进程残留或输出读取卡住的情况。
+- Windows 下新增 Job Object 进程组清理，运行/编译被取消或超时时会更可靠地结束子进程树。
+- 运行输出改为批量刷新到界面，降低大量 stdout / stderr 实时输出时的 WebView 渲染压力。
+- 开发与打包入口统一切换到 Yarn，修复 `yarn tauri:dev` 过程中内层 npm 读取 Yarn 环境变量而产生的 unknown env config warning。
+- README 开发命令同步为 Yarn，并标记项目包管理器为 `yarn@1.22.22`。
 
 ### v1.5.0
 
@@ -201,7 +209,7 @@ $env:Path="$env:USERPROFILE\.cargo\bin;$env:Path"
 ### 1. 安装前端依赖
 
 ```powershell
-npm install
+yarn install
 ```
 
 ### 2. 解压内置编译器
@@ -226,29 +234,29 @@ tools/clang-format.exe
 
 ```powershell
 cd C:\Users\daiji\Documents\work\33IDE
-npm run tauri:dev
+yarn tauri:dev
 ```
 
-看到桌面窗口弹出，且标题显示 `33IDE Lite v1.5.0`，说明本地开发环境已经正常启动。
+看到桌面窗口弹出，且标题显示 `33IDE Lite v1.5.1`，说明本地开发环境已经正常启动。
 
 ## 常用开发命令
 
 启动桌面开发模式：
 
 ```powershell
-npm run tauri:dev
+yarn tauri:dev
 ```
 
 只做前端构建检查：
 
 ```powershell
-npm run build
+yarn build
 ```
 
 打包安装程序：
 
 ```powershell
-npm run tauri:build
+yarn tauri:build
 ```
 
 默认输出目录：

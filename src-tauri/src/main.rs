@@ -14,6 +14,7 @@ mod settings;
 mod compiler;
 mod runner;
 mod clangd;
+mod process_runner;
 
 use settings::Settings;
 use compiler::{cancel_current_compile, compile};
