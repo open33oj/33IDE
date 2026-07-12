@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path tools/mingw64/bin/g++.exe)) {
-            7z x tools/mingw64.7z "-otools/mingw64" -y
+            7z x tools/mingw64.7z "-otools" -y
           }
 
       - name: Build Tauri installer

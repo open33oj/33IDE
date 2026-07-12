@@ -245,11 +245,12 @@ fn translate_gcc_error(msg: &str) -> String {
 
 /// Detect compiler path with the following priority:
 /// 1. User-configured path (from config.json)
-/// 2. Next to exe: tools/mingw64/bin/g++.exe
-/// 3. NSIS update dir: _up_/tools/mingw64/bin/g++.exe
+/// 2. NSIS update dir: _up_/tools/mingw64/bin/g++.exe
+/// 3. Next to exe: tools/mingw64/bin/g++.exe
 /// 4. Resources dir: resources/tools/mingw64/bin/g++.exe
 /// 5. Dev mode: go up from src-tauri/target/debug to project root
-/// 6. Fallback to system PATH "g++"
+/// 6. Legacy v1.5.1 nested NSIS resource path
+/// 7. Fallback to system PATH "g++"
 pub fn detect_compiler(settings: &Settings) -> String {
     if !settings.compiler_path.is_empty() {
         return settings.compiler_path.clone();
@@ -263,11 +264,12 @@ pub fn detect_compiler(settings: &Settings) -> String {
 
     let candidates: Vec<PathBuf> = if cfg!(target_os = "windows") {
         vec![
-            exe_dir.join("tools").join("mingw64").join("bin").join("g++.exe"),
             exe_dir.join("_up_").join("tools").join("mingw64").join("bin").join("g++.exe"),
+            exe_dir.join("tools").join("mingw64").join("bin").join("g++.exe"),
             exe_dir.join("resources").join("tools").join("mingw64").join("bin").join("g++.exe"),
             exe_dir.join("..").join("..").join("..").join("tools").join("mingw64").join("bin").join("g++.exe"),
             PathBuf::from("tools/mingw64/bin/g++.exe"),
+            exe_dir.join("_up_").join("tools").join("mingw64").join("mingw64").join("bin").join("g++.exe"),
         ]
     } else {
         vec![
